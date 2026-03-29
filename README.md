@@ -9,8 +9,8 @@ This top-level README shows both **TypeScript** and **Python** paths. The Python
 
 ## Repo layout
 
-- [typescript/](/home/mod/Code/plat/typescript) - TypeScript-focused samples and app examples
-- [python/](/home/mod/Code/plat/python) - Python package, samples, and Python-first docs
+- [typescript/](/typescript) - TypeScript-focused samples and app examples
+- [python/](/python) - Python package, samples, and Python-first docs
 
 #### It doesn't matter what you are designing
 - Standard REST API
@@ -61,12 +61,12 @@ Fair... try this
 
 TypeScript:
 ```bash
-npm i plat
+npm i modularizer-plat
 ```
 
 Python:
 ```bash
-pip install plat
+pip install modularizer-plat
 ```
 
 ---

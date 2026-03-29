@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "plat"
+name = "modularizer-plat"
 version = "0.1.0"
-description = "Python client and server package for the plat API framework"
+description = "Protocol and Language Agnostic Tooling Yielding Universal Semantics"
 readme = "README.md"
 license = "Unlicense"
 requires-python = ">=3.10"

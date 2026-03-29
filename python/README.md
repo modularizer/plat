@@ -52,7 +52,7 @@ Fair... try this
 
 ## 1. Install
 ```bash
-pip install plat
+pip install modularizer-plat
 ```
 
 ---

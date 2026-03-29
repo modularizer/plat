@@ -1,7 +1,7 @@
 {
-  "name": "plat",
+  "name": "modularizer-plat",
   "version": "0.1.0",
-  "description": "Type-safe API framework built on Zod with generated client proxies and OpenAPI",
+  "description": "Protocol and Language Agnostic Tooling Yielding Universal Semantics",
   "type": "module",
   "author": {
     "name": "Torin Halsted",

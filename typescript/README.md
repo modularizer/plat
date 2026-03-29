@@ -52,7 +52,7 @@ Fair... try this
 
 ## 1. Install
 ```bash
-npm i plat
+npm i modularizer-plat
 ```
 
 ---
