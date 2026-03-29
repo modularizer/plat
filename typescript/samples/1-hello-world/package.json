@@ -1,0 +1,22 @@
+{
+  "name": "plat-hello-world",
+  "version": "1.0.0",
+  "description": "Hello World plat API — minimal monorepo with shared types",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch server.ts",
+    "gen": "plat gen",
+    "build": "tsc",
+    "start": "node dist/server.js"
+  },
+  "dependencies": {
+    "plat": "file:../..",
+    "express": "^5.2.1"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^25.5.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.4.0"
+  }
+}

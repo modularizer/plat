@@ -1,0 +1,4 @@
+scripts
+src
+*.ts
+tsconfig.json

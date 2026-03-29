@@ -1,0 +1,249 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "SaaS Analytics API",
+    "version": "1.0.0"
+  },
+  "servers": [
+    {
+      "url": "http://localhost:3000"
+    }
+  ],
+  "paths": {
+    "/analytics/trackEvent": {
+      "post": {
+        "operationId": "trackEvent",
+        "security": [{ "bearer": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "eventType": { "type": "string" },
+                  "userId": { "type": "string" },
+                  "properties": {
+                    "type": "object",
+                    "additionalProperties": true
+                  }
+                },
+                "required": ["eventType", "userId"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Event" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/analytics/trackPageView": {
+      "post": {
+        "operationId": "trackPageView",
+        "security": [{ "bearer": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "userId": { "type": "string" },
+                  "page": { "type": "string" },
+                  "referrer": { "type": "string" }
+                },
+                "required": ["userId", "page"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/PageView" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/analytics/getAnalytics": {
+      "get": {
+        "operationId": "getAnalytics",
+        "security": [{ "bearer": [] }],
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Analytics" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/analytics/getProfile": {
+      "get": {
+        "operationId": "getProfile",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/User" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/analytics/listEvents": {
+      "get": {
+        "operationId": "listEvents",
+        "security": [{ "bearer": [] }],
+        "parameters": [
+          {
+            "name": "userId",
+            "in": "query",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "eventType",
+            "in": "query",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": { "type": "integer" }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "schema": { "type": "integer" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "events": {
+                      "type": "array",
+                      "items": { "$ref": "#/components/schemas/Event" }
+                    },
+                    "total": { "type": "integer" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearer": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    },
+    "schemas": {
+      "Event": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "userId": { "type": "string" },
+          "eventType": { "type": "string" },
+          "properties": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "timestamp": { "type": "string" }
+        },
+        "required": ["id", "userId", "eventType", "timestamp"]
+      },
+      "PageView": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "userId": { "type": "string" },
+          "page": { "type": "string" },
+          "referrer": { "type": "string" },
+          "timestamp": { "type": "string" }
+        },
+        "required": ["id", "userId", "page", "timestamp"]
+      },
+      "Analytics": {
+        "type": "object",
+        "properties": {
+          "totalEvents": { "type": "integer" },
+          "uniqueUsers": { "type": "integer" },
+          "eventTypes": {
+            "type": "object",
+            "additionalProperties": { "type": "integer" }
+          },
+          "topPages": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "page": { "type": "string" },
+                "views": { "type": "integer" }
+              }
+            }
+          }
+        },
+        "required": ["totalEvents", "uniqueUsers", "eventTypes", "topPages"]
+      },
+      "User": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "email": { "type": "string" },
+          "name": { "type": "string" },
+          "role": {
+            "type": "string",
+            "enum": ["admin", "analyst", "user"]
+          }
+        },
+        "required": ["id", "email", "name", "role"]
+      }
+    }
+  }
+}

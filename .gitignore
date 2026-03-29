@@ -1,0 +1,89 @@
+############################
+# Node
+############################
+
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+############################
+# Build output
+############################
+
+dist/
+build/
+coverage/
+
+
+
+############################
+# TypeScript
+############################
+
+*.tsbuildinfo
+
+############################
+# Environment variables
+############################
+
+.env
+typpescript/.env.sample
+!.env.example
+
+############################
+# Logs
+############################
+
+logs/
+*.log
+
+############################
+# Editors
+############################
+
+.vscode/
+.idea/
+*.swp
+*.swo
+*.swn
+*~
+
+############################
+# OS files
+############################
+
+.DS_Store
+Thumbs.db
+
+############################
+# Temporary files
+############################
+
+tmp/
+temp/
+
+############################
+# Misc
+############################
+
+*.pid
+*.seed
+*.lock
+
+
+
+###
+**/*u-*
+*-u.*
+**/*untracked-*
+*-untracked.*
+**/*u_*
+*_u.*
+**/*untracked_*
+*_untracked.*
+
+
+*venv*
+*.egg-info

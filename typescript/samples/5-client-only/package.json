@@ -1,0 +1,12 @@
+{
+  "name": "plat-client-only",
+  "version": "1.0.0",
+  "description": "Client-only repo — no server, generates all clients from openapi.json",
+  "type": "module",
+  "scripts": {
+    "gen": "plat gen"
+  },
+  "devDependencies": {
+    "plat": "workspace:*"
+  }
+}
