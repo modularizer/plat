@@ -33,7 +33,7 @@ export function parseRelativeDate(input: string, now = new Date()): Date | null 
     if (!match) return null
 
     const amount = Number(match[1])
-    const unit = match[2]
+    const unit = match[2]!
     const sign = s.includes('ago') ? -1 : 1
 
     const MS: Record<string, number> = {
@@ -45,7 +45,7 @@ export function parseRelativeDate(input: string, now = new Date()): Date | null 
         w: 604_800_000, week: 604_800_000, weeks: 604_800_000,
     }
 
-    if (unit in MS) return addMs(now, sign * amount * MS[unit])
+    if (unit in MS) return addMs(now, sign * amount * MS[unit]!)
     if (/^(mo|month|months)$/.test(unit)) return addMonths(now, sign * amount)
     if (/^(y|yr|year|years)$/.test(unit)) return addYears(now, sign * amount)
     return null
@@ -79,7 +79,7 @@ export function parseDateish(
 export interface JsonSchema {
     type?: string
     format?: string
-    coerce?: string
+    coerce?: string | boolean
     properties?: Record<string, JsonSchema>
     items?: JsonSchema
     [key: string]: unknown

@@ -1,2 +1,2 @@
 
-export * from './plat'
+export * from './z2'

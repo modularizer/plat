@@ -1,0 +1,8 @@
+src/
+scripts/
+tsconfig*.json
+jest.config.*
+**/*.spec.js
+**/*.spec.d.ts
+**/*.spec.d.ts.map
+**/*.spec.js.map

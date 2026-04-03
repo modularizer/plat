@@ -98,7 +98,7 @@ describe('CLI Argument Parsing', () => {
           const key = parts[0]!
           const value = parts[1]
 
-          parsed[key] = value || true
+          try { parsed[key] = JSON.parse(value!) } catch { parsed[key] = value || true }
         }
       }
 

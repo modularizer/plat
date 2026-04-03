@@ -61,12 +61,12 @@ Fair... try this
 
 TypeScript:
 ```bash
-npm i modularizer-plat
+npm i @modularizer/plat
 ```
 
 Python:
 ```bash
-pip install modularizer-plat
+pip install modularizer-plat  # Python package name unchanged
 ```
 
 ---
@@ -75,7 +75,7 @@ pip install modularizer-plat
 
 TypeScript:
 ```ts
-import { Controller, POST, createServer, type RouteContext } from "plat"
+import { Controller, POST, createServer, type RouteContext } from "@modularizer/plat"
 
 @Controller()
 class OrdersApi {
@@ -180,7 +180,7 @@ python cli.py createOrder --itemId=sku_123 --qty=2
 
 TypeScript:
 ```ts
-import { OpenAPIClient } from "plat"
+import { OpenAPIClient } from "@modularizer/plat"
 
 
 const spec = await fetch("http://localhost:3000/openapi.json").then((r) => r.json())
@@ -360,7 +360,7 @@ plat is intentionally opinionated about the API shape.
 ### Example
 
 ```ts
-import { Controller, GET, POST, type RouteContext } from "plat"
+import { Controller, GET, POST, type RouteContext } from "@modularizer/plat"
 
 type GetOrderInput = { id: string }
 type CreateOrderInput = { itemId: string; qty: number }

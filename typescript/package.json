@@ -1,5 +1,5 @@
 {
-  "name": "modularizer-plat",
+  "name": "@modularizer/plat",
   "version": "0.1.0",
   "description": "Protocol and Language Agnostic Tooling Yielding Universal Semantics",
   "type": "module",
@@ -18,10 +18,10 @@
   },
   "homepage": "https://github.com/modularizer/plat",
   "bin": {
-    "plat": "bin/plat.js"
+    "plat": "bin/z2.js"
   },
-  "main": "../dist/index.js",
-  "types": "dist/index.d.ts",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "import": "./dist/index.js",
@@ -29,22 +29,23 @@
     }
   },
   "files": [
-    "../dist"
+    "dist",
+    "bin"
   ],
   "scripts": {
-    "build": "../node_modules/.bin/tsc",
-    "typecheck": "../node_modules/.bin/tsc --noEmit && tsc -p tsconfig.scripts.json",
-    "gen:samples": "../node_modules/.bin/tsx scripts/gen-samples.ts",
-    "test": "../node_modules/.bin/tsx scripts/gen-samples.ts && jest",
-    "test:watch": "../node_modules/.bin/jest --watch",
-    "test:coverage": "../node_modules/.bin/jest --coverage",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.scripts.json",
+    "gen:samples": "tsx scripts/gen-samples.ts",
+    "test": "tsx scripts/gen-samples.ts && jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
     "gen": "cd ../sample && npm run gen",
-    "gen:openapi": "../node_modules/.bin/tsx scripts/gen-openapi.ts",
-    "gen:openapi-spec": "../node_modules/.bin/tsx scripts/gen-openapi-spec.ts",
-    "gen:client": "../node_modules/.bin/tsx scripts/gen-client-openapi.ts",
-    "gen:cli": "../node_modules/.bin/tsx scripts/gen-cli.ts",
-    "env:init": "../node_modules/.bin/tsx scripts/init-env.ts",
-    "env:secret": "../node_modules/.bin/tsx scripts/update-jwt-secret.ts"
+    "gen:openapi": "tsx scripts/gen-openapi.ts",
+    "gen:openapi-spec": "tsx scripts/gen-openapi-spec.ts",
+    "gen:client": "tsx scripts/gen-client-openapi.ts",
+    "gen:cli": "tsx scripts/gen-cli.ts",
+    "env:init": "tsx scripts/init-env.ts",
+    "env:secret": "tsx scripts/update-jwt-secret.ts"
   },
   "keywords": [
     "zod",

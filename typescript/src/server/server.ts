@@ -288,6 +288,13 @@ export class PLATServer {
             return
         }
 
+        this.mountDocUI()
+    }
+
+    /**
+     * Mount Swagger UI and ReDoc based on current options.
+     */
+    private mountDocUI(): void {
         const swaggerPath = this.options.swagger === true ? '/docs' : typeof this.options.swagger === 'string' ? this.options.swagger : null
         const redocPath = this.options.redoc === true ? '/redoc' : typeof this.options.redoc === 'string' ? this.options.redoc : null
 
@@ -305,6 +312,20 @@ export class PLATServer {
                 }),
             )
         }
+    }
+
+    /**
+     * Setup docs UI after auto-generating the OpenAPI spec.
+     * Mounts Swagger UI at /docs and ReDoc at /redoc by default.
+     */
+    private setupAutoDocumentation(): void {
+        if (!this.options.swagger && this.options.swagger !== false) {
+            this.options.swagger = true
+        }
+        if (!this.options.redoc && this.options.redoc !== false) {
+            this.options.redoc = true
+        }
+        this.mountDocUI()
     }
 
     /**
@@ -1200,11 +1221,76 @@ export class PLATServer {
      * Listen on a port
      * Convenience method that starts the server
      */
+    /**
+     * Auto-generate an OpenAPI 3.1.0 spec from registered tool definitions.
+     * Called by listen() when no explicit openapi option was provided.
+     */
+    private generateOpenAPISpec(): Record<string, any> {
+        const paths: Record<string, any> = {}
+
+        for (const [, tool] of this.tools) {
+            const method = (tool.method as string).toLowerCase()
+            const path = tool.path as string
+
+            const operation: Record<string, any> = {
+                operationId: tool.name,
+                summary: tool.summary || tool.description,
+                tags: tool.tags,
+                responses: {
+                    '200': {
+                        description: 'Successful response',
+                        ...(tool.response_schema ? {
+                            content: { 'application/json': { schema: tool.response_schema } },
+                        } : {}),
+                    },
+                },
+            }
+
+            const inputSchema = tool.input_schema
+            if (inputSchema && Object.keys(inputSchema.properties ?? {}).length > 0) {
+                if (method === 'get' || method === 'head' || method === 'delete') {
+                    operation.parameters = Object.entries(inputSchema.properties as Record<string, any>).map(
+                        ([name, schema]: [string, any]) => ({
+                            name,
+                            in: 'query',
+                            required: (inputSchema.required as string[] ?? []).includes(name),
+                            schema,
+                        }),
+                    )
+                } else {
+                    operation.requestBody = {
+                        required: true,
+                        content: {
+                            'application/json': { schema: inputSchema },
+                        },
+                    }
+                }
+            }
+
+            paths[path] = { ...(paths[path] ?? {}), [method]: operation }
+        }
+
+        return {
+            openapi: '3.1.0',
+            info: {
+                title: 'plat API',
+                version: '0.1.0',
+            },
+            paths,
+        }
+    }
+
     listen(
         port?: number,
         hostOrCallback?: string | (() => void),
         callbackIfHost?: () => void,
     ): PLATServer {
+        // Auto-generate OpenAPI spec if not explicitly provided
+        if (!this.options.openapi) {
+            this.options.openapi = this.generateOpenAPISpec()
+            this.setupAutoDocumentation()
+        }
+
         const finalPort = port ?? this.options.port ?? 3000
         const finalHost = this.options.host ?? 'localhost'
         const finalProtocol = this.options.protocol ?? 'http'

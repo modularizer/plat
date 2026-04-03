@@ -6,7 +6,7 @@
     "moduleResolution": "Bundler",
 
     "rootDir": "./src",
-    "outDir": "../dist",
+    "outDir": "./dist",
 
     "declaration": true,
     "declarationMap": true,
@@ -33,7 +33,9 @@
 
   "exclude": [
     "../node_modules",
+    "node_modules",
     "dist",
-    "scripts"
+    "scripts",
+    "src/**/*.spec.ts"
   ]
 }

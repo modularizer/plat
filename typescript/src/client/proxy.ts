@@ -57,6 +57,15 @@ export function createClientProxy<T>(
                     return executeRoute(fetchImpl, route, parsedInput, config, callOptions)
                 }
             },
+            ownKeys() {
+                return [...byMethodName.keys()]
+            },
+            getOwnPropertyDescriptor(_target, prop) {
+                if (typeof prop === 'string' && byMethodName.has(prop)) {
+                    return { configurable: true, enumerable: true, writable: true }
+                }
+                return undefined
+            },
         },
     ) as Clientified<T>
 }
