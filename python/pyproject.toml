@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "modularizer-plat"
-version = "0.4.0"
+version = "0.5.0"
 description = "Protocol and Language Agnostic Tooling Yielding Universal Semantics"
 readme = "README.md"
 license = "Unlicense"
