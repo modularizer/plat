@@ -110,8 +110,8 @@ export function createToolDefinition(
     httpMethod: string,
     path: string,
     description: string,
-    inputSchema?: ZodSchema,
-    responseSchema?: ZodSchema,
+    inputSchema?: ZodSchema | Record<string, any>,
+    responseSchema?: ZodSchema | Record<string, any>,
     controller?: string
 ): ToolDefinition
 
@@ -123,8 +123,8 @@ export function createToolDefinition(
     httpMethod?: string,
     path?: string,
     description?: string,
-    inputSchema?: ZodSchema,
-    responseSchema?: ZodSchema,
+    inputSchema?: ZodSchema | Record<string, any>,
+    responseSchema?: ZodSchema | Record<string, any>,
     controller?: string
 ): ToolDefinition {
     if (typeof initOrMethodName === 'object') {
@@ -134,7 +134,7 @@ export function createToolDefinition(
     const methodName = initOrMethodName
     const normalizedMethod = (httpMethod || 'GET').toUpperCase()
     const normalizedPath = path || `/${methodName}`
-    const jsonInputSchema = inputSchema ? zodToJsonSchema(inputSchema) : emptyInputSchema()
+    const jsonInputSchema = inputSchema ? schemaToJsonSchema(inputSchema) : emptyInputSchema()
 
     return {
         name: methodName,
@@ -143,8 +143,29 @@ export function createToolDefinition(
         path: normalizedPath,
         controller,
         input_schema: normalizeInputSchema(jsonInputSchema),
-        response_schema: responseSchema ? zodToJsonSchema(responseSchema) : undefined,
+        response_schema: responseSchema ? schemaToJsonSchema(responseSchema) : undefined,
     }
+}
+
+function schemaToJsonSchema(schema: ZodSchema | Record<string, any>): Record<string, any> {
+    if (isJsonSchemaObject(schema)) {
+        return schema
+    }
+    return zodToJsonSchema(schema as ZodSchema)
+}
+
+function isJsonSchemaObject(schema: unknown): schema is Record<string, any> {
+    return Boolean(
+        schema
+        && typeof schema === 'object'
+        && !('_def' in (schema as Record<string, any>))
+        && (
+            'type' in (schema as Record<string, any>)
+            || 'properties' in (schema as Record<string, any>)
+            || 'oneOf' in (schema as Record<string, any>)
+            || 'enum' in (schema as Record<string, any>)
+        )
+    )
 }
 
 /**

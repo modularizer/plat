@@ -1,0 +1,1913 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>plat</title>
+    <script type="importmap">
+      {
+        "imports": {
+          "@modularizer/plat/client-server": "./dist/client-server-entry.js",
+          "mqtt": "https://esm.sh/mqtt@5?bundle"
+        }
+      }
+    </script>
+    <style>
+      :root {
+        --bg: #f3f0ea;
+        --bg-2: #fcfaf6;
+        --ink: #1b1c18;
+        --muted: #5f6257;
+        --line: rgba(39, 52, 43, 0.12);
+        --panel: rgba(255, 252, 246, 0.84);
+        --accent: #1d6b59;
+        --accent-2: #c55f33;
+        --accent-3: #15435b;
+        --shadow: 0 22px 44px rgba(49, 51, 41, 0.09);
+        --mono: "SFMono-Regular", "Menlo", "Consolas", monospace;
+        --sans: "Avenir Next", "Segoe UI", sans-serif;
+      }
+      * { box-sizing: border-box; }
+      html { scroll-behavior: smooth; }
+      body {
+        margin: 0;
+        font-family: var(--sans);
+        color: var(--ink);
+        background:
+          radial-gradient(circle at top left, rgba(29, 107, 89, 0.11), transparent 28%),
+          radial-gradient(circle at bottom right, rgba(197, 95, 51, 0.10), transparent 24%),
+          linear-gradient(180deg, var(--bg) 0%, var(--bg-2) 100%);
+      }
+      a { color: var(--accent); text-decoration: none; }
+      a:hover { text-decoration: underline; }
+      .shell {
+        width: min(1120px, calc(100vw - 32px));
+        margin: 0 auto;
+        padding: 20px 0 48px;
+        display: grid;
+        gap: 18px;
+      }
+      .nav {
+        position: sticky;
+        top: 14px;
+        z-index: 10;
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        padding: 12px 14px;
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        background: rgba(255,255,255,0.72);
+        backdrop-filter: blur(14px);
+        box-shadow: var(--shadow);
+      }
+      .brand {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        font-weight: 700;
+      }
+      .brand-mark {
+        width: 34px;
+        height: 34px;
+        border-radius: 10px;
+        display: grid;
+        place-items: center;
+        background: linear-gradient(135deg, var(--accent), var(--accent-3));
+        color: white;
+        font-size: 18px;
+      }
+      .nav-links {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .nav-links a {
+        padding: 8px 12px;
+        border-radius: 999px;
+        background: rgba(29, 107, 89, 0.08);
+        color: var(--ink);
+        font-size: 14px;
+      }
+      .hero, .panel {
+        border: 1px solid var(--line);
+        border-radius: 26px;
+        background: var(--panel);
+        box-shadow: var(--shadow);
+        backdrop-filter: blur(10px);
+      }
+      .hero {
+        padding: 30px;
+        display: grid;
+        gap: 16px;
+        position: relative;
+        z-index: 2;
+        overflow: visible;
+      }
+      .hero-intro {
+        display: grid;
+        gap: 4px;
+      }
+      .eyebrow {
+        color: var(--accent-3);
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+        font-size: 12px;
+        font-weight: 700;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .discrete {
+        color: rgba(21, 67, 91, 0.58);
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+      }
+      h1 {
+        margin: 0;
+        font-size: clamp(2.4rem, 6vw, 4.8rem);
+        line-height: 0.95;
+      }
+      .lede {
+        font-size: clamp(1.45rem, 3vw, 2.65rem);
+        line-height: 1.05;
+        color: var(--ink);
+        font-weight: 700;
+        width: 100%;
+        white-space: nowrap;
+        letter-spacing: -0.04em;
+      }
+      .hero-copy {
+        display: grid;
+        gap: 4px;
+        max-width: 72ch;
+      }
+      .hero-copy p {
+        margin: 0;
+        color: var(--muted);
+        line-height: 1.35;
+        font-size: 0.98rem;
+      }
+      .hero-copy ul {
+        margin: 0;
+        padding-left: 20px;
+        color: var(--muted);
+        line-height: 1.45;
+      }
+      .hero-copy li strong {
+        color: var(--ink);
+      }
+      .hero-grid {
+        display: grid;
+        gap: 16px;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+      .callout {
+        padding: 14px;
+        border-radius: 18px;
+        background: linear-gradient(180deg, rgba(21, 67, 91, 0.07), rgba(29, 107, 89, 0.05));
+        border: 1px solid rgba(21, 67, 91, 0.1);
+        display: grid;
+        gap: 10px;
+      }
+      .callout strong {
+        font-size: 1rem;
+      }
+      .callout-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+      }
+      .callout-head-left {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        position: relative;
+      }
+      .info-button {
+        width: 22px;
+        height: 22px;
+        border: 1px solid rgba(21, 67, 91, 0.28);
+        border-radius: 999px;
+        display: inline-grid;
+        place-items: center;
+        background: transparent;
+        color: var(--accent-3);
+        font: 700 12px/1 var(--sans);
+        cursor: pointer;
+      }
+      .info-button:hover {
+        background: rgba(21, 67, 91, 0.06);
+      }
+      .info-button:focus-visible {
+        outline: 2px solid rgba(21, 67, 91, 0.24);
+        outline-offset: 2px;
+      }
+      .info-tooltip {
+        position: absolute;
+        top: calc(100% + 10px);
+        left: 0;
+        width: min(340px, calc(100vw - 56px));
+        padding: 12px 13px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: var(--bg-2);
+        color: var(--ink);
+        box-shadow: var(--shadow);
+        opacity: 0;
+        pointer-events: none;
+        transform: translateY(-4px);
+        transition: opacity 140ms ease, transform 140ms ease;
+        z-index: 5;
+      }
+      .info-tooltip p {
+        margin: 0 0 8px;
+        color: var(--muted);
+        line-height: 1.45;
+        font-size: 13px;
+      }
+      .info-tooltip p:last-child {
+        margin-bottom: 0;
+      }
+      .info-tooltip strong {
+        color: var(--ink);
+      }
+      .info-tooltip ul {
+        margin: 0;
+        padding-left: 18px;
+        color: var(--muted);
+        line-height: 1.45;
+        font-size: 13px;
+      }
+      .info-tooltip li + li {
+        margin-top: 4px;
+      }
+      .callout-head-left:hover .info-tooltip,
+      .callout-head-left:focus-within .info-tooltip {
+        opacity: 1;
+        pointer-events: auto;
+        transform: translateY(0);
+      }
+      .warning-row {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        position: relative;
+        justify-self: start;
+        z-index: 6;
+        color: var(--accent-2);
+        font-size: 13px;
+        font-weight: 700;
+      }
+      .warning-row em {
+        font-style: normal;
+        text-decoration: underline;
+        text-underline-offset: 2px;
+      }
+      .warning-row .info-tooltip {
+        width: min(360px, calc(100vw - 56px));
+        left: 0;
+        right: auto;
+      }
+      .warning-row:hover .info-tooltip,
+      .warning-row:focus-within .info-tooltip {
+        opacity: 1;
+        pointer-events: auto;
+        transform: translateY(0);
+      }
+      .live-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 5px 10px;
+        border-radius: 999px;
+        background: rgba(29, 107, 89, 0.12);
+        color: var(--accent);
+        font-size: 12px;
+        font-weight: 700;
+      }
+      .live-pill.is-pending {
+        background: rgba(21, 67, 91, 0.12);
+        color: var(--accent-3);
+      }
+      .live-pill.is-backup {
+        background: rgba(197, 95, 51, 0.14);
+        color: #9a512e;
+      }
+      .live-pill.is-error {
+        background: rgba(197, 95, 51, 0.14);
+        color: var(--accent-2);
+      }
+      .live-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        background: #27c16f;
+        box-shadow: 0 0 0 0 rgba(39, 193, 111, 0.75);
+        animation: live-pulse 1.3s infinite;
+      }
+      .live-pill.is-pending .live-dot {
+        background: var(--accent-3);
+        box-shadow: 0 0 0 0 rgba(21, 67, 91, 0.7);
+      }
+      .live-pill.is-backup .live-dot {
+        background: #d98b55;
+        box-shadow: none;
+        animation: none;
+      }
+      .live-pill.is-error .live-dot {
+        background: var(--accent-2);
+        box-shadow: none;
+        animation: none;
+      }
+      @keyframes live-pulse {
+        0% { box-shadow: 0 0 0 0 rgba(39, 193, 111, 0.8); }
+        70% { box-shadow: 0 0 0 8px rgba(39, 193, 111, 0); }
+        100% { box-shadow: 0 0 0 0 rgba(39, 193, 111, 0); }
+      }
+      .callout p {
+        margin: 0;
+        color: var(--muted);
+        line-height: 1.5;
+        font-size: 14px;
+      }
+      .demo-link {
+        font-size: 13px;
+        font-weight: 700;
+      }
+      .mini-demo-code {
+        padding: 12px;
+        border-radius: 14px;
+        background: #182022;
+        color: #d4ece5;
+        font-family: var(--mono);
+        font-size: 12px;
+        line-height: 1.55;
+        white-space: pre-wrap;
+      }
+      .mini-demo-code-editor {
+        width: 100%;
+        min-height: 116px;
+        resize: none;
+        border: 0;
+        outline: none;
+        overflow: hidden;
+      }
+      .mini-demo-editor-shell {
+        position: relative;
+        overflow: hidden;
+        min-height: 238px;
+        border-radius: 14px;
+        background: #182022;
+      }
+      .mini-demo-editor-mirror,
+      .mini-demo-editor {
+        width: 100%;
+        height: 238px;
+        padding: 12px;
+        font-family: var(--mono);
+        font-size: 12px;
+        line-height: 1.55;
+        white-space: pre-wrap;
+        word-break: break-word;
+        tab-size: 2;
+        overflow: auto;
+      }
+      .mini-demo-editor-mirror {
+        margin: 0;
+        display: block;
+        position: absolute;
+        inset: 0;
+        color: #d4ece5;
+        pointer-events: none;
+      }
+      .mini-demo-editor {
+        resize: none;
+        border: 0;
+        outline: none;
+        background: transparent;
+        color: transparent;
+        caret-color: #d4ece5;
+        position: relative;
+        z-index: 1;
+        transition: box-shadow 180ms ease;
+      }
+      .mini-demo-editor.is-handler-active {
+        box-shadow: 0 0 0 1px rgba(29, 107, 89, 0.18), 0 0 0 4px rgba(29, 107, 89, 0.08);
+      }
+      .editor-line.is-handler-active {
+        color: #9ef3c9;
+        text-shadow: 0 0 10px rgba(158, 243, 201, 0.45);
+        background: linear-gradient(90deg, rgba(29, 107, 89, 0.14), transparent 72%);
+      }
+      .mini-demo-controls {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .mini-demo-inline-code {
+        flex: 1 1 240px;
+        min-width: 0;
+        padding: 10px 12px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: #fff;
+        color: var(--ink);
+        font-family: var(--mono);
+        font-size: 13px;
+      }
+      .mini-demo-result {
+        min-height: 30px;
+        padding: 8px 12px;
+        border-radius: 12px;
+        background: rgba(21, 67, 91, 0.08);
+        color: var(--ink);
+        font-family: var(--mono);
+        font-size: 12px;
+        white-space: pre-wrap;
+        transition: transform 180ms ease, background-color 180ms ease, box-shadow 180ms ease;
+      }
+      .mini-demo-result.is-updated {
+        background: rgba(29, 107, 89, 0.16);
+        box-shadow: 0 0 0 1px rgba(29, 107, 89, 0.12);
+        transform: translateY(-1px);
+      }
+      .button-row {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+      .button, .button.secondary {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        padding: 12px 16px;
+        border-radius: 999px;
+        font-weight: 700;
+        border: 0;
+      }
+      .button {
+        background: var(--accent);
+        color: white;
+      }
+      .button.is-running {
+        background: #154f43;
+        box-shadow: 0 0 0 0 rgba(29, 107, 89, 0.35), inset 0 0 0 1px rgba(255,255,255,0.12);
+        animation: button-pulse 1s infinite;
+        transform: translateY(-1px) scale(1.02);
+      }
+      .button:disabled {
+        opacity: 1;
+        cursor: progress;
+      }
+      .button-spinner {
+        width: 12px;
+        height: 12px;
+        border: 2px solid rgba(255,255,255,0.35);
+        border-top-color: white;
+        border-radius: 999px;
+        display: none;
+        animation: button-spin 0.8s linear infinite;
+      }
+      .button.is-running .button-spinner {
+        display: inline-block;
+      }
+      @keyframes button-spin {
+        to { transform: rotate(360deg); }
+      }
+      @keyframes button-pulse {
+        0% { box-shadow: 0 0 0 0 rgba(29, 107, 89, 0.35); }
+        70% { box-shadow: 0 0 0 10px rgba(29, 107, 89, 0); }
+        100% { box-shadow: 0 0 0 0 rgba(29, 107, 89, 0); }
+      }
+      .button.secondary {
+        background: rgba(29, 107, 89, 0.09);
+        color: var(--ink);
+      }
+      .panel {
+        padding: 20px;
+        display: grid;
+        gap: 14px;
+      }
+      .panel h2 {
+        margin: 0;
+        font-size: 1.15rem;
+      }
+      .panel p {
+        margin: 0;
+        color: var(--muted);
+        line-height: 1.55;
+      }
+      .grid-2 {
+        display: grid;
+        gap: 18px;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+      .grid-3 {
+        display: grid;
+        gap: 14px;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+      .mini-card {
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        background: rgba(255,255,255,0.45);
+        padding: 16px;
+        display: grid;
+        gap: 8px;
+      }
+      .mini-card strong {
+        font-size: 0.98rem;
+      }
+      .quickstart-card {
+        gap: 14px;
+      }
+      .quickstart-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      .quickstart-language-toggle {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 4px;
+        border: 1px solid rgba(21, 67, 91, 0.12);
+        background: rgba(255,255,255,0.6);
+        border-radius: 999px;
+      }
+      .quickstart-language-option {
+        border: 0;
+        background: transparent;
+        color: var(--muted);
+        border-radius: 999px;
+        padding: 7px 12px;
+        font: inherit;
+        font-weight: 700;
+        cursor: pointer;
+        transition: background 140ms ease, color 140ms ease, box-shadow 140ms ease;
+      }
+      .quickstart-language-option:hover {
+        color: var(--ink);
+      }
+      .quickstart-language-option.is-active {
+        background: rgba(29, 107, 89, 0.14);
+        color: var(--leaf-dark);
+        box-shadow: inset 0 0 0 1px rgba(29, 107, 89, 0.16);
+      }
+      .quickstart-language-option:focus-visible {
+        outline: 2px solid rgba(29, 107, 89, 0.26);
+        outline-offset: 2px;
+      }
+      .quickstart-panels {
+        display: grid;
+      }
+      .quickstart-panels > [hidden] {
+        display: none !important;
+      }
+      .quickstart-accordion {
+        display: grid;
+        gap: 10px;
+      }
+      .quickstart-accordion details {
+        border: 1px solid rgba(21, 67, 91, 0.11);
+        border-radius: 14px;
+        background: rgba(255,255,255,0.28);
+      }
+      .quickstart-accordion details[open] {
+        border-color: rgba(29, 107, 89, 0.42);
+        background: rgba(255,255,255,0.34);
+        box-shadow: inset 0 0 0 1px rgba(29, 107, 89, 0.12);
+      }
+      .quickstart-accordion summary {
+        padding: 11px 12px 10px;
+        background: rgba(21, 67, 91, 0.04);
+      }
+      .quickstart-accordion details[open] summary {
+        background: rgba(29, 107, 89, 0.16);
+      }
+      .quickstart-step {
+        display: grid;
+        gap: 8px;
+      }
+      .quickstart-step-header {
+        display: flex;
+        gap: 10px;
+        align-items: baseline;
+        flex-wrap: wrap;
+      }
+      .quickstart-step-number {
+        font-size: 0.78rem;
+        font-weight: 800;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--leaf-dark);
+      }
+      .quickstart-step-title {
+        font-size: 1rem;
+        font-weight: 700;
+        color: var(--ink);
+      }
+      .quickstart-step p {
+        margin: 0;
+        font-size: 0.95rem;
+      }
+      .quickstart-accordion .details-body {
+        padding: 8px 12px 12px;
+        gap: 10px;
+        background: rgba(255,255,255,0.62);
+      }
+      .quickstart-card .code {
+        margin-top: 2px;
+      }
+      .outputs-grid {
+        display: grid;
+        gap: 14px;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        align-items: start;
+      }
+      .output-panel {
+        display: grid;
+        gap: 12px;
+      }
+      .output-head {
+        display: grid;
+        gap: 3px;
+      }
+      .output-kicker {
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--accent-3);
+      }
+      .output-title {
+        font-size: 1.08rem;
+        font-weight: 800;
+      }
+      .output-head p {
+        font-size: 13px;
+        line-height: 1.35;
+      }
+      .output-stack {
+        display: grid;
+        gap: 8px;
+      }
+      .output-item {
+        position: relative;
+        border: 1px solid rgba(21, 67, 91, 0.11);
+        border-radius: 14px;
+        background: rgba(255,255,255,0.28);
+        overflow: hidden;
+      }
+      .output-toggle {
+        position: absolute;
+        opacity: 0;
+        pointer-events: none;
+      }
+      .output-toggle:checked ~ .output-summary {
+        background: rgba(29, 107, 89, 0.16);
+      }
+      .output-toggle:checked ~ .output-body {
+        display: grid;
+      }
+      .output-toggle:checked ~ .output-summary::after {
+        content: '−';
+      }
+      .output-toggle:checked ~ .output-summary .output-label,
+      .output-toggle:checked ~ .output-summary .output-hint {
+        color: var(--ink);
+      }
+      .output-item:has(.output-toggle:checked) {
+        border-color: rgba(29, 107, 89, 0.42);
+        background: rgba(255,255,255,0.34);
+        box-shadow: inset 0 0 0 1px rgba(29, 107, 89, 0.12);
+      }
+      .output-summary {
+        width: 100%;
+        padding: 11px 12px 10px;
+        text-align: left;
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 10px;
+        background: rgba(21, 67, 91, 0.04);
+        cursor: pointer;
+      }
+      .output-summary::after {
+        content: '+';
+        color: var(--muted);
+        font-weight: 700;
+      }
+      .output-label {
+        font-size: 13px;
+        font-weight: 700;
+        color: var(--ink);
+      }
+      .output-hint {
+        font-size: 11px;
+        color: var(--muted);
+        white-space: nowrap;
+      }
+      .output-body {
+        padding: 8px 12px 12px;
+        display: none;
+        gap: 7px;
+        background: rgba(255,255,255,0.62);
+      }
+      .output-body p {
+        font-size: 12px;
+        line-height: 1.35;
+      }
+      .output-code {
+        padding: 10px 11px;
+        border-radius: 12px;
+        background: #182022;
+        color: #d4ece5;
+      }
+      .coming-soon {
+        display: inline-flex;
+        align-items: center;
+        font-size: 11px;
+        color: var(--muted);
+      }
+      .mono {
+        font-family: var(--mono);
+        white-space: pre-wrap;
+        font-size: 12px;
+        line-height: 1.6;
+      }
+      .code {
+        padding: 14px;
+        border-radius: 18px;
+        background: #182022;
+        color: #d4ece5;
+      }
+      details {
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        background: rgba(255,255,255,0.42);
+        overflow: hidden;
+      }
+      summary {
+        cursor: pointer;
+        list-style: none;
+        padding: 16px 18px;
+        font-weight: 700;
+      }
+      summary::-webkit-details-marker { display: none; }
+      .details-body {
+        padding: 0 18px 18px;
+        display: grid;
+        gap: 14px;
+      }
+      .details-body ul {
+        margin: -4px 0 0;
+      }
+      .philosophy-accordion {
+        display: grid;
+        gap: 10px;
+      }
+      .faq-accordion {
+        display: grid;
+        gap: 10px;
+      }
+      .philosophy-accordion details {
+        border: 1px solid rgba(21, 67, 91, 0.11);
+        border-radius: 14px;
+        background: rgba(255,255,255,0.28);
+      }
+      .faq-accordion details {
+        border: 1px solid rgba(21, 67, 91, 0.11);
+        border-radius: 14px;
+        background: rgba(255,255,255,0.28);
+      }
+      .philosophy-accordion details[open] {
+        border-color: rgba(29, 107, 89, 0.42);
+        background: rgba(255,255,255,0.34);
+        box-shadow: inset 0 0 0 1px rgba(29, 107, 89, 0.12);
+      }
+      .faq-accordion details[open] {
+        border-color: rgba(29, 107, 89, 0.42);
+        background: rgba(255,255,255,0.34);
+        box-shadow: inset 0 0 0 1px rgba(29, 107, 89, 0.12);
+      }
+      .philosophy-accordion summary {
+        padding: 11px 12px 10px;
+        background: rgba(21, 67, 91, 0.04);
+      }
+      .faq-accordion summary {
+        padding: 11px 12px 10px;
+        background: rgba(21, 67, 91, 0.04);
+      }
+      .philosophy-accordion details[open] summary {
+        background: rgba(29, 107, 89, 0.16);
+      }
+      .faq-accordion details[open] summary {
+        background: rgba(29, 107, 89, 0.16);
+      }
+      .philosophy-accordion .details-body {
+        padding: 8px 12px 12px;
+        gap: 10px;
+        background: rgba(255,255,255,0.62);
+      }
+      .faq-accordion .details-body {
+        padding: 8px 12px 12px;
+        gap: 10px;
+        background: rgba(255,255,255,0.62);
+      }
+      .demo-grid {
+        display: grid;
+        gap: 16px;
+        grid-template-columns: minmax(0, 1.05fr) minmax(300px, 0.95fr);
+      }
+      .pill-row {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .pill {
+        padding: 7px 11px;
+        border-radius: 999px;
+        background: rgba(21, 67, 91, 0.08);
+        color: var(--accent-3);
+        font-size: 12px;
+        font-weight: 700;
+      }
+      .footer {
+        color: var(--muted);
+        font-size: 14px;
+        text-align: center;
+        padding: 10px 0 0;
+      }
+      @media (max-width: 960px) {
+        .hero-grid, .grid-2, .grid-3, .demo-grid {
+          grid-template-columns: 1fr;
+        }
+        .outputs-grid {
+          grid-template-columns: 1fr;
+        }
+        .lede {
+          white-space: normal;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <div class="nav">
+        <div class="brand">
+          <div class="brand-mark">🦫</div>
+          <div>plat</div>
+        </div>
+        <div class="nav-links">
+          <a href="#what">What It Is</a>
+          <a href="#surfaces">Outputs</a>
+          <a href="#philosophy">Philosophy</a>
+          <a href="#details">Details</a>
+        </div>
+      </div>
+
+      <section class="hero" id="top">
+        <div class="hero-intro">
+        <div class="eyebrow">Protocol + Language Agnostic Tooling <span class="discrete">Yielding Proxy-like Universal Semantics</span></div>
+        <div class="lede">
+          just write your methods...then call them
+        </div>
+        </div>
+        <div class="hero-copy">
+          <p>From the same method surface, plat can create:</p>
+          <ul>
+            <li>🌐 <strong>An API</strong> with a full OpenAPI spec and Swagger/ReDoc playground</li>
+            <li>⌨️ <strong>A CLI</strong> with full help tooling</li>
+            <li>🤖 <strong>MCP and tool definitions</strong> for AI systems</li>
+            <li>🧩 <strong>TypeScript/JavaScript proxies</strong> you can call directly</li>
+            <li>🐍 <strong>Python proxies</strong> with the same method surface</li>
+            <li>🛶 <strong>Browser-hosted client-side servers</strong> for fun live demos like this one</li>
+          </ul>
+        </div>
+        <div class="hero-grid">
+          <div class="callout">
+            <div class="callout-head">
+              <div class="callout-head-left">
+                <strong>server</strong>
+                <button class="info-button" id="inlineServerInfoButton" type="button" aria-label="What is happening here?">i</button>
+                <div class="info-tooltip" role="tooltip">
+                  <p><strong>What is happening here</strong></p>
+                  <ul>
+                    <li>This browser-hosted "client-side-server" is just a fun demo, where two browsers find each other with MQTT signaling, then talk over WebRTC.</li>
+                    <li>Try opening another tab on this device or any other, the tabs will talk to each other</li>
+                    <li><strong>The important part is the code shape.</strong> </li>
+                    <li>Real plat usage looks very similar on true server-side TypeScript with express</li>
+                    <li>Or in Python with pydantic and FastAPI.</li>
+                    <li>Doc strings, type hints, and even comments specifying min/max/etc all get built into an openapi.json</li>
+                  </ul>
+                </div>
+              </div>
+              <div class="live-pill"><span class="live-dot"></span><span id="inlineServerStatus">live</span></div>
+            </div>
+            <div class="mini-demo-editor-shell">
+            <pre class="mini-demo-editor-mirror" id="inlineServerEditorMirror" aria-hidden="true"></pre>
+            <textarea class="mini-demo-editor" id="inlineServerEditor">import { serveClientSideServer } from '@modularizer/plat/client-server'
+
+class DemoApi {
+  /** Add two numbers and return the sum. */
+  async add({ a, b }) {
+    return a + b
+  }
+}
+
+export default serveClientSideServer('browser-math', [DemoApi])</textarea>
+            </div>
+            <a class="demo-link" href="./demo/server.html">Open full server demo</a>
+          </div>
+          <div class="callout">
+            <div class="callout-head">
+              <div class="callout-head-left">
+                <strong>client</strong>
+                <button class="info-button" id="inlineClientInfoButton" type="button" aria-label="What is happening here?">i</button>
+                <div class="info-tooltip" role="tooltip">
+                  <p><strong>What is happening here</strong></p>
+                  <ul>
+                    <li>The client shape looks very similar in TypeScript or Python.</li>
+                    <li>It can connect to any kind of server: Python, TypeScript, client-side-server, or anything else.</li>
+                    <li><strong>The key requirement is the server exposes an openapi.json.</strong></li>
+                    <li>The proxy is auto-built from any openapi.json</li>
+                    <li>Supports http, websockets, WebRTC, etc.</li>
+                  </ul>
+                </div>
+              </div>
+              <div class="live-pill is-pending"><span class="live-dot"></span><span id="inlineClientStatus">waiting</span></div>
+            </div>
+            <textarea class="mini-demo-code mini-demo-code-editor" id="inlineClientCode">import { OpenAPIClient } from '@modularizer/plat/client-server'
+
+const client = new OpenAPIClient(openapi, {
+  baseUrl: 'css://browser-math',
+  transportPlugins: [transport],
+})</textarea>
+            <div class="mini-demo-controls">
+              <input class="mini-demo-inline-code" id="inlineCallInput" value="await client.add({ a: 20, b: 22 })" />
+              <button class="button" id="inlineRunButton" type="button"><span class="button-spinner" aria-hidden="true"></span><span id="inlineRunLabel">Run</span></button>
+            </div>
+            <div class="mini-demo-result" id="inlineResult">42</div>
+            <a class="demo-link" href="./demo/client.html">Open full client demo</a>
+          </div>
+        </div>
+        <div class="warning-row" tabindex="0">
+          <span>⚠️ WARNING: this demo is probably <em>weirder than you think</em></span>
+          <button class="info-button" type="button" aria-label="Why is this demo weird?">i</button>
+          <div class="info-tooltip" role="tooltip">
+            <p><strong>Why this is weird</strong></p>
+            <ul>
+              <li>The server in this hero is running in the browser, not on a normal backend.</li>
+              <li>The client is connecting over MQTT-signaled WebRTC, so two tabs or devices can talk directly.</li>
+              <li>The browser code is still producing and consuming a real OpenAPI surface.</li>
+              <li>This is a deliberately unusual demo because it can live on a fully static site.</li>
+              <li><strong>Plat absolutely works the normal way too:</strong> as a real server in TypeScript or Python.</li>
+              <li>Remember, plat is platform + language agnostic. This demo just uses a intentionally funny plugin I made</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel" id="what">
+        <h2>What Plat Actually Is</h2>
+        <div class="grid-3">
+          <div class="mini-card">
+            <strong>The sacred part</strong>
+            <p>What methods exist, what they accept, and what they return.</p>
+          </div>
+          <div class="mini-card">
+            <strong>The flexible part</strong>
+            <p>Transport, runtime, language, and generated caller surfaces.</p>
+          </div>
+          <div class="mini-card">
+            <strong>The promise</strong>
+            <p>Call it like you’re there, whether you’re in TS, Python, CLI, or an AI tool-call loop.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel" id="surfaces">
+        <h2>One Definition, Many Outputs</h2>
+        <div class="outputs-grid">
+          <div class="output-panel">
+            <div class="output-head">
+              <div class="output-kicker">Server</div>
+              <div class="output-title">Where the methods live</div>
+            </div>
+            <div class="output-stack">
+              <div class="output-item">
+                <input class="output-toggle" type="radio" name="server-output" id="server-output-ts" checked />
+                <label class="output-summary" for="server-output-ts"><span class="output-label">TypeScript server</span><span class="output-hint">Express / Node</span></label>
+                <div class="output-body">
+                  <p>Run plat inside a normal Node app and expose your methods over HTTP without changing the class shape.</p>
+                  <div class="output-code mono">import { createServer } from "@modularizer/plat"
+createServer({}, OrdersApi).listen()</div>
+                </div>
+              </div>
+              <div class="output-item">
+                <input class="output-toggle" type="radio" name="server-output" id="server-output-py" />
+                <label class="output-summary" for="server-output-py"><span class="output-label">Python server</span><span class="output-hint">FastAPI / Pydantic</span></label>
+                <div class="output-body">
+                  <p>Use the same method-first model in Python, with Python-native validation and server tooling underneath.</p>
+                  <div class="output-code mono">from plat import create_server
+create_server({}, OrdersApi).listen()</div>
+                </div>
+              </div>
+              <div class="output-item">
+                <input class="output-toggle" type="radio" name="server-output" id="server-output-css" />
+                <label class="output-summary" for="server-output-css"><span class="output-label">Client-side-server</span><span class="output-hint">(fun)</span></label>
+                <div class="output-body">
+                  <p>This is the browser-hosted variant. It is great for demos, experiments, and peer-to-peer browser scenarios.</p>
+                  <div class="output-code mono">import { serveClientSideServer } from "@modularizer/plat/client-server"
+export default serveClientSideServer("browser-math", [DemoApi])</div>
+                </div>
+              </div>
+              <div class="output-item">
+                <input class="output-toggle" type="radio" name="server-output" id="server-output-more" />
+                <label class="output-summary" for="server-output-more"><span class="output-label">More to come</span><span class="output-hint">Extensible</span></label>
+                <div class="output-body">
+                  <p>Other runtimes and transports can plug into the same model over time.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="output-panel">
+            <div class="output-head">
+              <div class="output-kicker">Interface</div>
+              <div class="output-title">The shared contract</div>
+            </div>
+            <div class="output-stack">
+              <div class="output-item">
+                <input class="output-toggle" type="radio" name="interface-output" id="interface-output-openapi" checked />
+                <label class="output-summary" for="interface-output-openapi"><span class="output-label">OpenAPI</span><span class="output-hint">Machine-readable</span></label>
+                <div class="output-body">
+                  <p>Plat can describe your method surface as a full OpenAPI document, including routes, schemas, summaries, and response shapes.</p>
+                </div>
+              </div>
+              <div class="output-item">
+                <input class="output-toggle" type="radio" name="interface-output" id="interface-output-docs" />
+                <label class="output-summary" for="interface-output-docs"><span class="output-label">Swagger / ReDoc</span><span class="output-hint">Docs surfaces</span></label>
+                <div class="output-body">
+                  <p>The same contract can power familiar interactive docs and exploration, so humans get a useful playground from the same source.</p>
+                </div>
+              </div>
+              <div class="output-item">
+                <input class="output-toggle" type="radio" name="interface-output" id="interface-output-descriptions" />
+                <label class="output-summary" for="interface-output-descriptions"><span class="output-label">Descriptions</span><span class="output-hint">Summaries, schemas, examples</span></label>
+                <div class="output-body">
+                  <p>Docstrings, examples, and schemas become shared interface metadata instead of one-off docs that drift from the code.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="output-panel">
+            <div class="output-head">
+              <div class="output-kicker">Client</div>
+              <div class="output-title">How callers meet it</div>
+            </div>
+            <div class="output-stack">
+              <div class="output-item">
+                <input class="output-toggle" type="radio" name="client-output" id="client-output-ts" checked />
+                <label class="output-summary" for="client-output-ts"><span class="output-label">TS / JS proxy</span><span class="output-hint">Direct method calls</span></label>
+                <div class="output-body">
+                  <p>Call methods from browser or Node code with a proxy that feels local even when the implementation lives elsewhere.</p>
+                  <div class="output-code mono">const order = await client.createOrder({
+  itemId: "sku_123",
+  qty: 2,
+})</div>
+                </div>
+              </div>
+              <div class="output-item">
+                <input class="output-toggle" type="radio" name="client-output" id="client-output-py" />
+                <label class="output-summary" for="client-output-py"><span class="output-label">Python proxy</span><span class="output-hint">Same semantics</span></label>
+                <div class="output-body">
+                  <p>Keep the same method surface in Python callers so TS and Python apps can both speak the same contract.</p>
+                </div>
+              </div>
+              <div class="output-item">
+                <input class="output-toggle" type="radio" name="client-output" id="client-output-mcp" />
+                <label class="output-summary" for="client-output-mcp"><span class="output-label">MCP / tool calls</span><span class="output-hint">For AI systems</span></label>
+                <div class="output-body">
+                  <p>Expose the same methods as AI tools instead of re-describing capabilities by hand for each model provider.</p>
+                  <div class="output-code mono">tools = client.tools
+# hand to your AI provider
+# then call client.createOrder(...)</div>
+                </div>
+              </div>
+              <div class="output-item">
+                <input class="output-toggle" type="radio" name="client-output" id="client-output-cli" />
+                <label class="output-summary" for="client-output-cli"><span class="output-label">CLI</span><span class="output-hint">Commands and help</span></label>
+                <div class="output-body">
+                  <p>Turn the same methods into a command-line interface with built-in help, argument parsing, and discoverable commands.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel philosophy-accordion" id="philosophy">
+        <h2>Core Philosophy</h2>
+        <details open>
+          <summary>One flat method surface</summary>
+          <div class="details-body">
+            <p>What you should be thinking about is:</p>
+            <ul>
+              <li>what methods exist</li>
+              <li>what input each method accepts</li>
+              <li>what result each method returns</li>
+            </ul>
+            <p>That is the part plat treats as sacred.</p>
+            <div class="code mono">await client.getOrder({ id: "ord_123" })
+await client.createOrder({ itemId: "sku_123", qty: 2 })</div>
+            <p>Canonical routes:</p>
+            <ul>
+              <li><span class="mono">GET /getOrder</span></li>
+              <li><span class="mono">POST /createOrder</span></li>
+            </ul>
+            <p>Why this matters:</p>
+            <ul>
+              <li>method names are globally unique and become the canonical route names</li>
+              <li>controllers organize code and docs, not URL hierarchies</li>
+              <li>proxies stay obvious and easy to call</li>
+              <li>CLI commands stay easy to expose and remember</li>
+              <li>MCP servers and AI tools get simple, stable tool names</li>
+              <li>AI systems are less likely to get confused by deep route hierarchies or duplicated naming schemes</li>
+            </ul>
+            <p>Not nested route trees. Not manually synchronized operation names. Just a flat, obvious method surface.</p>
+          </div>
+        </details>
+        <details>
+          <summary>One input object, one result</summary>
+          <div class="details-body">
+            <p>Each operation should feel tool-shaped:</p>
+            <ul>
+              <li>one input object in</li>
+              <li>one result out</li>
+              <li>no path-param-heavy call shape to remember</li>
+            </ul>
+            <div class="code mono">const order = await client.createOrder({
+  itemId: "sku_123",
+  qty: 2,
+})</div>
+            <p>Why this matters:</p>
+            <ul>
+              <li>it maps naturally to JSON schemas and OpenAPI</li>
+              <li>tool calling systems want a single structured input object</li>
+              <li>generated clients stay predictable across languages</li>
+              <li>you pass an object that matches the method, instead of mentally juggling route params, query params, and body params as separate things</li>
+            </ul>
+            <p>That shape works unusually well across HTTP APIs, CLIs, generated clients, MCP tools, and AI tool-calling systems.</p>
+          </div>
+        </details>
+        <details>
+          <summary>Transport should not change the call</summary>
+          <div class="details-body">
+            <p>The same method call should stay usable even when the carrier changes:</p>
+            <div class="code mono">await httpClient.createOrder({ itemId: "sku_123", qty: 2 })
+await rpcClient.createOrder({ itemId: "sku_123", qty: 2 })
+await fileClient.createOrder({ itemId: "sku_123", qty: 2 })</div>
+            <p>You should not have to think:</p>
+            <ul>
+              <li>which HTTP method do I use here?</li>
+              <li>is this route encoded in the path or the body?</li>
+              <li>which client library do I need for this protocol?</li>
+            </ul>
+            <ul>
+              <li>HTTP</li>
+              <li>WebSockets</li>
+              <li>File queues</li>
+              <li>WebRTC</li>
+              <li>literally anything that can carry a JSON envelope</li>
+            </ul>
+            <p>Why this matters:</p>
+            <ul>
+              <li>you can change infrastructure without rewriting your callers</li>
+              <li>the same method stays usable from browsers, servers, CLIs, and workers</li>
+              <li>teams can experiment with transports without changing the mental model</li>
+              <li>the client call stays <span class="mono">client.createOrder(...)</span>, not <span class="mono">client.post('/createOrder', ...)</span></li>
+            </ul>
+            <p>Carrier and plugin details are for transport authors. Normal users should still feel like they are just calling methods.</p>
+          </div>
+        </details>
+        <details>
+          <summary>Generated surfaces should stay honest</summary>
+          <div class="details-body">
+            <p>Docs, clients, CLIs, and tool definitions should all come from the same underlying interface, not from separate handwritten copies.</p>
+            <ul>
+              <li>OpenAPI stays aligned with the code</li>
+              <li>CLI commands stay aligned with the method names</li>
+              <li>SDK methods stay aligned with the operation IDs</li>
+              <li>Tool definitions stay aligned with the input schema</li>
+            </ul>
+            <p>Why this matters: once these surfaces drift apart, users stop trusting the generated docs and clients. Honest generation keeps the whole stack coherent.</p>
+          </div>
+        </details>
+        <details>
+          <summary>Transport details stay hidden</summary>
+          <div class="details-body">
+            <p>For normal plat users, the important thing is:</p>
+            <ul>
+              <li>methods stay flat</li>
+              <li>typing stays strong</li>
+              <li>clients feel direct</li>
+              <li>transport details stay hidden</li>
+              <li>provider complexity stays hidden too</li>
+            </ul>
+            <p>Why this matters: most users do not want to think about envelopes, retries, brokers, or provider-specific SDK quirks every time they make a call.</p>
+            <p>For plugin authors, transport and protocol mechanics are the extension story. For everyone else, it should just feel like calling methods.</p>
+          </div>
+        </details>
+      </section>
+
+      <section class="panel" id="quickstart">
+        <div class="quickstart-head">
+          <h2>Quickstart</h2>
+          <div class="quickstart-language-toggle" role="tablist" aria-label="Quickstart language">
+            <button class="quickstart-language-option is-active" id="quickstartLanguageTs" type="button" data-quickstart-language="typescript" aria-pressed="true">TypeScript</button>
+            <button class="quickstart-language-option" id="quickstartLanguagePy" type="button" data-quickstart-language="python" aria-pressed="false">Python</button>
+          </div>
+        </div>
+        <div class="quickstart-panels">
+          <div class="mini-card quickstart-card" data-quickstart-panel="typescript">
+            <div class="quickstart-accordion">
+              <details open>
+                <summary>
+                  <div class="quickstart-step-header">
+                    <span class="quickstart-step-number">Step 1</span>
+                    <span class="quickstart-step-title">Install plat</span>
+                  </div>
+                </summary>
+                <div class="details-body quickstart-step">
+                  <p>Start with the package and the CLI. The rest of the flow builds from the same class methods.</p>
+                  <div class="code mono">npm i modularizer-plat</div>
+                </div>
+              </details>
+              <details>
+                <summary>
+                  <div class="quickstart-step-header">
+                    <span class="quickstart-step-number">Step 2</span>
+                    <span class="quickstart-step-title">Define a server</span>
+                  </div>
+                </summary>
+                <div class="details-body quickstart-step">
+                  <p>Write a controller method, give it input and output types, and start the server. That single method surface becomes the source of truth.</p>
+                  <div class="code mono">import { Controller, POST, createServer, type RouteContext } from "plat"
+
+@Controller()
+class OrdersApi {
+  @POST()
+  async createOrder(
+    input: { itemId: string; qty: number },
+    ctx: RouteContext,
+  ): Promise<{ orderId: string; status: string }> {
+    return { orderId: "ord_123", status: "pending" }
+  }
+}
+
+const server = createServer({ port: 3000 }, OrdersApi)
+server.listen()</div>
+                </div>
+              </details>
+              <details>
+                <summary>
+                  <div class="quickstart-step-header">
+                    <span class="quickstart-step-number">Step 3</span>
+                    <span class="quickstart-step-title">Serve it and inspect the docs</span>
+                  </div>
+                </summary>
+                <div class="details-body quickstart-step">
+                  <p>Run the CLI to launch the server, then open the generated docs and OpenAPI description in the browser.</p>
+                  <div class="code mono">plat serve
+open http://localhost:3000/</div>
+                </div>
+              </details>
+              <details>
+                <summary>
+                  <div class="quickstart-step-header">
+                    <span class="quickstart-step-number">Step 4</span>
+                    <span class="quickstart-step-title">Generate a typed client</span>
+                  </div>
+                </summary>
+                <div class="details-body quickstart-step">
+                  <p>Point plat at the running OpenAPI spec and generate a client you can import directly into your app.</p>
+                  <div class="code mono">plat gen client http://localhost:3000/ --dst client.ts</div>
+                  <div class="code mono">import { createClient } from "./client"
+
+const client = createClient("http://localhost:3000")
+const order = await client.createOrder({ itemId: "sku_123", qty: 2 })
+console.log(order)</div>
+                </div>
+              </details>
+              <details>
+                <summary>
+                  <div class="quickstart-step-header">
+                    <span class="quickstart-step-number">Step 5</span>
+                    <span class="quickstart-step-title">Generate a CLI</span>
+                  </div>
+                </summary>
+                <div class="details-body quickstart-step">
+                  <p>The same method surface can become a real command-line interface with flags, help text, and argument parsing.</p>
+                  <div class="code mono">plat gen cli http://localhost:3000/ --dst cli.ts
+npx tsx cli.ts createOrder --itemId=sku_123 --qty=2</div>
+                </div>
+              </details>
+              <details>
+                <summary>
+                  <div class="quickstart-step-header">
+                    <span class="quickstart-step-number">Step 6</span>
+                    <span class="quickstart-step-title">Hand tools to AI</span>
+                  </div>
+                </summary>
+                <div class="details-body quickstart-step">
+                  <p>You can also build an OpenAPI client at runtime and hand its tool definitions to an AI provider without changing your underlying methods.</p>
+                  <div class="code mono">import { OpenAPIClient } from "plat"
+
+const spec = await fetch("http://localhost:3000/openapi.json").then((r) =&gt; r.json())
+const client = new OpenAPIClient(spec, { baseUrl: "http://localhost:3000" })
+
+const tools = client.tools
+// hand `tools` to your AI provider
+// then call back into `client.createOrder(...)`</div>
+                </div>
+              </details>
+            </div>
+          </div>
+          <div class="mini-card quickstart-card" data-quickstart-panel="python" hidden>
+            <div class="quickstart-accordion">
+              <details open>
+                <summary>
+                  <div class="quickstart-step-header">
+                    <span class="quickstart-step-number">Step 1</span>
+                    <span class="quickstart-step-title">Install plat</span>
+                  </div>
+                </summary>
+                <div class="details-body quickstart-step">
+                  <p>Install the Python package and CLI first. After that, the flow is the same idea as TypeScript: define methods once and reuse them everywhere.</p>
+                  <div class="code mono">pip install modularizer-plat</div>
+                </div>
+              </details>
+              <details>
+                <summary>
+                  <div class="quickstart-step-header">
+                    <span class="quickstart-step-number">Step 2</span>
+                    <span class="quickstart-step-title">Define a server</span>
+                  </div>
+                </summary>
+                <div class="details-body quickstart-step">
+                  <p>Write a controller method with Python types, then start the server. Plat turns that class into an API surface and OpenAPI spec.</p>
+                  <div class="code mono">from plat import Controller, POST, RouteContext, create_server
+
+@Controller()
+class OrdersApi:
+    @POST()
+    def createOrder(
+        self,
+        input: dict[str, str | int],
+        ctx: RouteContext,
+    ) -> dict[str, str]:
+        return {"orderId": "ord_123", "status": "pending"}
+
+server = create_server({"port": 3000}, OrdersApi)
+server.listen()</div>
+                </div>
+              </details>
+              <details>
+                <summary>
+                  <div class="quickstart-step-header">
+                    <span class="quickstart-step-number">Step 3</span>
+                    <span class="quickstart-step-title">Serve it and inspect the docs</span>
+                  </div>
+                </summary>
+                <div class="details-body quickstart-step">
+                  <p>Run the CLI to serve the app, then open the generated docs and OpenAPI description in the browser.</p>
+                  <div class="code mono">plat serve
+open http://localhost:3000/</div>
+                </div>
+              </details>
+              <details>
+                <summary>
+                  <div class="quickstart-step-header">
+                    <span class="quickstart-step-number">Step 4</span>
+                    <span class="quickstart-step-title">Generate a Python client</span>
+                  </div>
+                </summary>
+                <div class="details-body quickstart-step">
+                  <p>Generate a client from the running OpenAPI spec, import it, and call your method directly from Python code.</p>
+                  <div class="code mono">plat gen client http://localhost:3000/ --dst client.py</div>
+                  <div class="code mono">from client import create_client
+
+client = create_client("http://localhost:3000")
+order = client.createOrder(itemId="sku_123", qty=2)
+print(order)</div>
+                </div>
+              </details>
+              <details>
+                <summary>
+                  <div class="quickstart-step-header">
+                    <span class="quickstart-step-number">Step 5</span>
+                    <span class="quickstart-step-title">Generate a CLI</span>
+                  </div>
+                </summary>
+                <div class="details-body quickstart-step">
+                  <p>The same running server can also generate a Python CLI wrapper for scripts, automation, and shell usage.</p>
+                  <div class="code mono">plat gen cli http://localhost:3000/ --dst cli.py
+python cli.py createOrder --itemId=sku_123 --qty=2</div>
+                </div>
+              </details>
+              <details>
+                <summary>
+                  <div class="quickstart-step-header">
+                    <span class="quickstart-step-number">Step 6</span>
+                    <span class="quickstart-step-title">Hand tools to AI</span>
+                  </div>
+                </summary>
+                <div class="details-body quickstart-step">
+                  <p>You can also build an OpenAPI client dynamically, expose its tool definitions, and let an AI system call back into the same methods.</p>
+                  <div class="code mono">from plat import create_openapi_client
+
+client = create_openapi_client(
+    "http://localhost:3000/openapi.json",
+    "http://localhost:3000",
+)
+
+tools = client.tools
+# hand `tools` to your AI provider
+# then call back into `client.createOrder(...)`</div>
+                </div>
+              </details>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel faq-accordion" id="details">
+        <h2>Frequently Asked Questions</h2>
+        <details open>
+          <summary>Is plat just an OpenAPI generator?</summary>
+          <div class="details-body">
+            <p>No. OpenAPI is one of the important outputs, but not the whole idea.</p>
+            <ul>
+              <li>APIs are one surface</li>
+              <li>CLIs are another</li>
+              <li>MCP and tool definitions are another</li>
+              <li>generated TS/JS and Python clients are another</li>
+            </ul>
+            <p>The core promise is: define useful methods once, then let clients, CLIs, docs, and AI tools all see the same surface.</p>
+          </div>
+        </details>
+        <details>
+          <summary>Why is plat so opinionated about a flat method surface?</summary>
+          <div class="details-body">
+            <p>Because flat method names make every generated surface simpler.</p>
+            <ul>
+              <li>easy for humans to remember</li>
+              <li>easy for CLIs to expose</li>
+              <li>easy for generated clients to mirror exactly</li>
+              <li>easy for AI agents and MCP tools to understand</li>
+            </ul>
+            <p>Deep route hierarchies and duplicated naming schemes create confusion fast, especially once you add SDKs, CLIs, and tool calling.</p>
+          </div>
+        </details>
+        <details>
+          <summary>Do I have to think about HTTP methods and route shapes when calling?</summary>
+          <div class="details-body">
+            <p>No. The calling experience is supposed to feel like this:</p>
+            <div class="code mono">const order = await client.createOrder({ itemId: "sku_123", qty: 2 })</div>
+            <p>Not like this:</p>
+            <ul>
+              <li>choosing between different client libraries</li>
+              <li>hand-authoring RPC envelopes</li>
+              <li>thinking about HTTP vs WS on every call</li>
+              <li>manually syncing route names and SDK method names</li>
+            </ul>
+            <p>The carrier is important for plugin authors. For normal users, the method call should stay direct.</p>
+          </div>
+        </details>
+        <details>
+          <summary>Does the same plat model work in Python too?</summary>
+          <div class="details-body">
+            <p>Yes. Plat supports Python servers and clients too.</p>
+            <ul>
+              <li>write Python controllers</li>
+              <li>generate OpenAPI from Python sources</li>
+              <li>generate Python clients from OpenAPI</li>
+              <li>use sync, async, and promise-style Python clients</li>
+            </ul>
+            <p>The language can change. The method surface is the point.</p>
+          </div>
+        </details>
+        <details>
+          <summary>What about long-running jobs, progress, and async workflows?</summary>
+          <div class="details-body">
+            <p>Plat tries to keep the mental model the same even when a method is slow.</p>
+            <div class="code mono">await client.importCatalog(
+  { source: "s3://bucket/catalog.csv" },
+  {
+    onRpcEvent(event) {
+      console.log(event.event, event.data)
+    },
+  },
+)</div>
+            <p>You can still think in terms of the same method, while getting:</p>
+            <ul>
+              <li>progress updates</li>
+              <li>logs</li>
+              <li>chunks/messages</li>
+              <li>deferred handles and cancellation</li>
+            </ul>
+          </div>
+        </details>
+        <details>
+          <summary>What is the weird browser demo actually proving?</summary>
+          <div class="details-body">
+            <p>It proves plat is not tied to a traditional backend process.</p>
+            <ul>
+              <li>the “server” can live in a browser tab</li>
+              <li>the client can still discover and use a real OpenAPI surface</li>
+              <li>the same method-first model still works over odd transports like MQTT-signaled WebRTC</li>
+            </ul>
+            <p>That demo is intentionally strange. Plat also works perfectly normally as a real TypeScript or Python server.</p>
+          </div>
+        </details>
+      </section>
+
+      <div class="footer">
+        plat: define methods once, then let callers meet them wherever they are.
+      </div>
+    </div>
+    <script type="module">
+      import {
+        OpenAPIClient,
+      } from './dist/client/openapi-client.js'
+      import {
+        fetchClientSideServerOpenAPI,
+      } from './dist/client-side-server/bootstrap.js'
+      import {
+        createClientSideServerMQTTWebRTCServer,
+        createClientSideServerMQTTWebRTCTransportPlugin,
+      } from './dist/client-side-server/mqtt-webrtc.js'
+      import {
+        createClientSideServer,
+      } from './dist/client-side-server/server.js'
+
+      const serverStatusEl = document.getElementById('inlineServerStatus')
+      const serverEditor = document.getElementById('inlineServerEditor')
+      const serverEditorMirrorEl = document.getElementById('inlineServerEditorMirror')
+      const serverStatusPillEl = serverStatusEl.parentElement
+      const clientStatusEl = document.getElementById('inlineClientStatus')
+      const clientStatusPillEl = clientStatusEl.parentElement
+      const clientCodeEl = document.getElementById('inlineClientCode')
+      const callInput = document.getElementById('inlineCallInput')
+      const resultEl = document.getElementById('inlineResult')
+      const runButton = document.getElementById('inlineRunButton')
+      const runLabelEl = document.getElementById('inlineRunLabel')
+      let inlineServer = null
+      let client = null
+      let activeClientBaseUrl = null
+      let restartTimer = null
+      let resultFlashTimer = null
+      let handlerFlashTimer = null
+      let ownerHeartbeatTimer = null
+      let ownerMonitorTimer = null
+      let ownedServerName = null
+      const serverOwnerTabId = sessionStorage.getItem('plat-docs-tab-id') ?? `tab-${crypto.randomUUID?.() ?? Math.random().toString(36).slice(2)}`
+      sessionStorage.setItem('plat-docs-tab-id', serverOwnerTabId)
+      const ownerKeyPrefix = 'plat-docs-server-owner:'
+      const ownerTtlMs = 6000
+
+      scheduleRestart()
+      syncServerEditorMirror()
+
+      function setInlineServerStatus(state) {
+        serverStatusEl.textContent = state
+        serverStatusPillEl?.classList.toggle('is-pending', state === 'starting' || state === 'updating')
+        serverStatusPillEl?.classList.toggle('is-backup', state === 'backup')
+        serverStatusPillEl?.classList.toggle('is-error', state === 'error')
+        serverStatusPillEl.title = state === 'backup'
+          ? 'This tab is in backup mode because another tab is already serving this server name.'
+          : ''
+      }
+
+      function setInlineClientStatus(state) {
+        clientStatusEl.textContent = state
+        clientStatusPillEl?.classList.toggle('is-pending', state === 'waiting' || state === 'connecting')
+        clientStatusPillEl?.classList.toggle('is-error', state === 'error')
+        clientStatusPillEl.title = ''
+      }
+
+      async function runDemo() {
+        const startedAt = performance.now()
+        runButton.disabled = true
+        runButton.classList.add('is-running')
+        runLabelEl.textContent = 'Running...'
+        resultEl.classList.remove('is-updated')
+        resultEl.textContent = 'running...'
+        try {
+          const nextBaseUrl = parseClientBaseUrl()
+          if (!client || activeClientBaseUrl !== nextBaseUrl) {
+            setInlineClientStatus('connecting')
+            await connectInlineClient(nextBaseUrl)
+          }
+          const runner = new Function('client', `return (async () => (${callInput.value}))()`)
+          const result = await runner(client)
+          resultEl.textContent = String(result)
+          setInlineClientStatus('connected')
+          flashInlineResult()
+        } catch (error) {
+          resultEl.textContent = `error: ${error instanceof Error ? error.message : String(error)}`
+          setInlineClientStatus('error')
+          flashInlineResult()
+        } finally {
+          const elapsedMs = performance.now() - startedAt
+          if (elapsedMs < 550) {
+            await new Promise((resolve) => setTimeout(resolve, 550 - elapsedMs))
+          }
+          runButton.disabled = false
+          runButton.classList.remove('is-running')
+          runLabelEl.textContent = 'Run'
+        }
+      }
+
+      function flashInlineResult() {
+        resultEl.classList.remove('is-updated')
+        if (resultFlashTimer) clearTimeout(resultFlashTimer)
+        void resultEl.offsetWidth
+        resultEl.classList.add('is-updated')
+        resultFlashTimer = setTimeout(() => {
+          resultEl.classList.remove('is-updated')
+        }, 700)
+      }
+
+      function parseClientBaseUrl() {
+        const match = clientCodeEl.value.match(/baseUrl:\s*['"]([^'"]+)['"]/)
+        if (!match) {
+          throw new Error('Expected the client code block to include baseUrl: \'css://...\'')
+        }
+        return match[1]
+      }
+
+      function flashServerHandler(methodName) {
+        const lines = serverEditor.value.split('\n')
+        const matcher = new RegExp(`\\b(?:async\\s+)?${methodName}\\s*\\(`)
+        const lineIndex = lines.findIndex((line) => matcher.test(line))
+        if (lineIndex < 0) return
+
+        syncServerEditorMirror(lineIndex)
+        serverEditor.classList.remove('is-handler-active')
+        void serverEditor.offsetWidth
+        serverEditor.classList.add('is-handler-active')
+        if (handlerFlashTimer) clearTimeout(handlerFlashTimer)
+        handlerFlashTimer = setTimeout(() => {
+          serverEditor.classList.remove('is-handler-active')
+          syncServerEditorMirror()
+        }, 700)
+      }
+
+      function syncServerEditorMirror(activeLineIndex = null) {
+        const escapeHtml = (value) => value
+          .replaceAll('&', '&amp;')
+          .replaceAll('<', '&lt;')
+          .replaceAll('>', '&gt;')
+
+        serverEditorMirrorEl.innerHTML = serverEditor.value
+          .split('\n')
+          .map((line, index) => {
+            const className = index === activeLineIndex ? 'editor-line is-handler-active' : 'editor-line'
+            return `<div class="${className}">${escapeHtml(line) || '&nbsp;'}</div>`
+          })
+          .join('')
+      }
+
+      function getServerOwnerKey(serverName) {
+        return `${ownerKeyPrefix}${serverName}`
+      }
+
+      function readServerOwner(serverName) {
+        const raw = localStorage.getItem(getServerOwnerKey(serverName))
+        if (!raw) return null
+        try {
+          const parsed = JSON.parse(raw)
+          if (!parsed || typeof parsed.tabId !== 'string' || typeof parsed.expiresAt !== 'number') return null
+          return parsed
+        } catch {
+          return null
+        }
+      }
+
+      function writeServerOwner(serverName) {
+        localStorage.setItem(getServerOwnerKey(serverName), JSON.stringify({
+          tabId: serverOwnerTabId,
+          expiresAt: Date.now() + ownerTtlMs,
+        }))
+      }
+
+      function releaseServerOwner(serverName) {
+        const current = readServerOwner(serverName)
+        if (current?.tabId === serverOwnerTabId) {
+          localStorage.removeItem(getServerOwnerKey(serverName))
+        }
+      }
+
+      function claimServerOwnership(serverName) {
+        const current = readServerOwner(serverName)
+        const expired = !current || current.expiresAt < Date.now()
+        const ownedByThisTab = current?.tabId === serverOwnerTabId
+        if (expired || ownedByThisTab) {
+          writeServerOwner(serverName)
+          ownedServerName = serverName
+          if (ownerHeartbeatTimer) clearInterval(ownerHeartbeatTimer)
+          ownerHeartbeatTimer = setInterval(() => {
+            writeServerOwner(serverName)
+          }, Math.floor(ownerTtlMs / 2))
+          return true
+        }
+        return false
+      }
+
+      function clearOwnershipTimers() {
+        if (ownerHeartbeatTimer) clearInterval(ownerHeartbeatTimer)
+        ownerHeartbeatTimer = null
+        if (ownerMonitorTimer) clearInterval(ownerMonitorTimer)
+        ownerMonitorTimer = null
+      }
+
+      function startBackupMonitor(serverName) {
+        if (ownerMonitorTimer) clearInterval(ownerMonitorTimer)
+        ownerMonitorTimer = setInterval(() => {
+          const current = readServerOwner(serverName)
+          if (!current || current.expiresAt < Date.now()) {
+            clearInterval(ownerMonitorTimer)
+            ownerMonitorTimer = null
+            void restartInlineServer()
+          }
+        }, 2000)
+      }
+
+      async function connectInlineClient(baseUrl) {
+        const transport = createClientSideServerMQTTWebRTCTransportPlugin({})
+        const openapi = await fetchClientSideServerOpenAPI(baseUrl, transport)
+        client = new OpenAPIClient(openapi, {
+          baseUrl,
+          transportPlugins: [transport],
+        })
+        activeClientBaseUrl = baseUrl
+      }
+
+      async function restartInlineServer() {
+        setInlineServerStatus('starting')
+        setInlineClientStatus('waiting')
+        clearOwnershipTimers()
+        if (ownedServerName) {
+          releaseServerOwner(ownedServerName)
+          ownedServerName = null
+        }
+        if (inlineServer?.stop) {
+          await inlineServer.stop()
+        }
+        const moduleUrl = URL.createObjectURL(new Blob([serverEditor.value], { type: 'text/javascript' }))
+        try {
+          const loaded = await import(moduleUrl)
+          const definition = loaded.default ?? loaded.clientSideServer
+          if (!definition || !Array.isArray(definition.controllers) || typeof definition.serverName !== 'string') {
+            throw new Error('Expected export default serveClientSideServer(name, [Controller])')
+          }
+          const claimed = claimServerOwnership(definition.serverName)
+          if (!claimed) {
+            inlineServer = {
+              stop: async () => {},
+            }
+            setInlineServerStatus('backup')
+            startBackupMonitor(definition.serverName)
+            return
+          }
+          const server = createClientSideServer({}, ...definition.controllers)
+          const originalHandleMessage = server.handleMessage.bind(server)
+          server.handleMessage = async (message, channel) => {
+            const methodName = typeof message?.operationId === 'string'
+              ? message.operationId
+              : typeof message?.path === 'string'
+                ? message.path.replace(/^\//, '')
+                : null
+            if (methodName) {
+              flashServerHandler(methodName)
+            }
+            await originalHandleMessage(message, channel)
+          }
+          const signaler = createClientSideServerMQTTWebRTCServer({
+            server,
+            serverName: definition.serverName,
+          })
+          inlineServer = {
+            stop: async () => {
+              client = null
+              activeClientBaseUrl = null
+              await signaler.stop()
+            },
+          }
+          await signaler.start()
+          setInlineServerStatus('live')
+        } catch (error) {
+          client = null
+          activeClientBaseUrl = null
+          inlineServer = null
+          setInlineServerStatus('error')
+          setInlineClientStatus('error')
+          console.error('Inline server failed to start', error)
+          resultEl.textContent = `error: ${error instanceof Error ? error.message : String(error)}`
+        } finally {
+          URL.revokeObjectURL(moduleUrl)
+        }
+      }
+
+      function scheduleRestart() {
+        setInlineServerStatus('updating')
+        if (restartTimer) clearTimeout(restartTimer)
+        restartTimer = setTimeout(() => {
+          void restartInlineServer()
+        }, 250)
+      }
+
+      serverEditor.addEventListener('input', () => {
+        syncServerEditorMirror()
+        scheduleRestart()
+      })
+      serverEditor.addEventListener('scroll', () => {
+        serverEditorMirrorEl.scrollTop = serverEditor.scrollTop
+        serverEditorMirrorEl.scrollLeft = serverEditor.scrollLeft
+      })
+      clientCodeEl.addEventListener('input', () => {
+        client = null
+        activeClientBaseUrl = null
+        setInlineClientStatus('waiting')
+      })
+      runButton.addEventListener('click', () => void runDemo())
+      window.addEventListener('beforeunload', () => {
+        clearOwnershipTimers()
+        if (ownedServerName) {
+          releaseServerOwner(ownedServerName)
+        }
+      })
+
+      setupSingleOpenDetails('.philosophy-accordion')
+      setupSingleOpenDetails('.quickstart-accordion')
+      setupSingleOpenDetails('.faq-accordion')
+      setupQuickstartLanguageToggle()
+
+      function setupSingleOpenDetails(selector) {
+        const section = document.querySelector(selector)
+        if (!(section instanceof Element)) return
+        const details = [...section.querySelectorAll('details')]
+        const firstOpen = details.find((item) => item.open) ?? details[0]
+        for (const item of details) {
+          item.open = item === firstOpen
+          item.addEventListener('toggle', () => {
+            if (!item.open) return
+            for (const other of details) {
+              if (other !== item) other.open = false
+            }
+          })
+        }
+      }
+
+      function setupQuickstartLanguageToggle() {
+        const buttons = [...document.querySelectorAll('[data-quickstart-language]')]
+        if (!buttons.length) return
+        const panels = [...document.querySelectorAll('[data-quickstart-panel]')]
+        const sync = (value) => {
+          for (const button of buttons) {
+            if (!(button instanceof HTMLButtonElement)) continue
+            const isActive = button.dataset.quickstartLanguage === value
+            button.classList.toggle('is-active', isActive)
+            button.setAttribute('aria-pressed', isActive ? 'true' : 'false')
+          }
+          for (const panel of panels) {
+            if (!(panel instanceof HTMLElement)) continue
+            panel.hidden = panel.dataset.quickstartPanel !== value
+          }
+        }
+        for (const button of buttons) {
+          if (!(button instanceof HTMLButtonElement)) continue
+          button.addEventListener('click', () => {
+            const value = button.dataset.quickstartLanguage
+            if (!value) return
+            sync(value)
+          })
+        }
+        const initial = buttons.find((button) => button.classList.contains('is-active'))?.dataset.quickstartLanguage ?? 'typescript'
+        sync(initial)
+      }
+    </script>
+  </body>
+</html>

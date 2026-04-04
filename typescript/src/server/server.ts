@@ -50,6 +50,7 @@ export class PLATServer {
         }
         this.logger = options.logger || defaultLogger
         this.core = new PLATServerCore({
+            undecoratedMode: this.options.undecoratedMode,
             allowedMethodPrefixes: this.options.allowedMethodPrefixes,
             disAllowedMethodPrefixes: this.options.disAllowedMethodPrefixes,
             validateRouteOpts: this.options.validateRouteOpts,

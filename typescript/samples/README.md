@@ -1,6 +1,6 @@
 # plat Sample Projects
 
-Five examples showing different project structures, generation targets, and deployment patterns.
+Six examples showing different project structures, generation targets, and deployment patterns.
 
 ## At a Glance
 
@@ -11,6 +11,7 @@ Five examples showing different project structures, generation targets, and depl
 | 3-ecommerce | `server.ts` | `server/` | `shared/` | openapi + TS + JS(ESM+CJS) + Python + CLIs | none |
 | 4-saas-analytics | `src/index.ts` | `src/api/` | `shared/` | openapi + Python client + CLI | JWT |
 | 5-client-only | N/A | N/A | N/A | TS + JS(ESM+CJS) + Python + CLIs | N/A |
+| 6-client-side-server | `server.html` + `client.html` | browser-hosted | inline editor | static HTML client/server over MQTT-signaled WebRTC | N/A |
 
 ---
 
@@ -67,6 +68,17 @@ Key difference: entry is `src/index.ts`, controllers live in `src/api/`, outputs
 ```
 openapi.json -> api.ts + api.mjs + api.cjs + api_client.py + cli.mjs + cli.py
 ```
+
+---
+
+## 6. Client-Side Server
+
+Two static HTML files:
+
+- `server.html` hosts the browser-side plat server, with an editable code panel that is truly re-imported from the editor contents
+- `client.html` acts as the browser-side client, with one-line request snippets and an onscreen response/console view
+
+They communicate through MQTT-signaled WebRTC using the `css://server-name` address shape.
 
 ---
 

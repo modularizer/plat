@@ -29,6 +29,14 @@ export interface FileQueueOptions {
 
 export interface PLATServerOptions {
     /**
+     * How to treat undecorated public instance methods during registration.
+     * - 'POST': expose undecorated public methods as POST routes (default)
+     * - 'GET': expose undecorated public methods as GET routes
+     * - 'private': require route decorators for exposure
+     */
+    undecoratedMode?: 'GET' | 'POST' | 'private'
+
+    /**
      * How much error information to expose to clients
      * - 'none': only { error: 'Internal server error' }
      * - 'message': { error: 'Original error message' }

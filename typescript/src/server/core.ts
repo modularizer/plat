@@ -1,11 +1,12 @@
 import { createToolDefinition } from './tools'
 import { generateRouteVariants } from './routing'
-import { ensureRouteMeta, getControllerMeta, pendingRoutes, ROUTE_METADATA_KEY } from '../spec'
+import { ensureControllerMeta, ensureRouteMeta, getControllerMeta, pendingRoutes, ROUTE_METADATA_KEY } from '../spec'
 import type { ControllerMeta, RouteMeta } from '../types/endpoints'
 import type { PLATServerResolvedOperation } from './transports'
 import { PLATOperationRegistry } from './operation-registry'
 
 interface PLATServerCoreOptions {
+  undecoratedMode?: 'GET' | 'POST' | 'private'
   allowedMethodPrefixes?: '*' | string[]
   disAllowedMethodPrefixes?: string[]
   validateRouteOpts?: (opts: Record<string, any>, methodName: string, path: string) => void | Promise<void>
@@ -37,10 +38,9 @@ export class PLATServerCore {
     const registered: RegisteredControllerOperation[] = []
 
     for (const ControllerClass of ControllerClasses) {
-      const meta = getControllerMeta(ControllerClass as Function)
-      if (!meta) {
-        throw new Error(`${ControllerClass.name} is not decorated with @Controller`)
-      }
+      const meta = getControllerMeta(ControllerClass as Function) ?? ensureControllerMeta(ControllerClass as Function)
+      if (!meta.basePath) meta.basePath = ControllerClass.name
+      if (!meta.tag) meta.tag = meta.basePath || ControllerClass.name
 
       const instance = new ControllerClass()
       const controllerTag = meta.tag || meta.basePath || ControllerClass.name
@@ -173,21 +173,33 @@ export class PLATServerCore {
 
   private collectRoutes(ControllerClass: new () => any, freshMeta?: ControllerMeta): Map<string | symbol, { method: string }> {
     const routes = new Map<string | symbol, { method: string }>()
+    const undecoratedMode = this.options.undecoratedMode ?? 'POST'
 
     for (const key of Object.getOwnPropertyNames(ControllerClass.prototype)) {
       if (key === 'constructor') continue
+      if (key.startsWith('_')) continue
       const method = ControllerClass.prototype[key]
       if (typeof method !== 'function') continue
       const routeData = method[ROUTE_METADATA_KEY]
       if (routeData) {
         routes.set(key, { method: routeData.httpMethod })
+      } else if (undecoratedMode !== 'private') {
+        routes.set(key, { method: undecoratedMode })
       }
     }
 
     if (freshMeta) {
       for (const [key, routeMeta] of freshMeta.routes.entries()) {
-        if (!routeMeta.method) continue
-        routes.set(key, { method: routeMeta.method })
+        const keyName = String(key)
+        const prototypeMethod = (ControllerClass as any).prototype?.[keyName]
+        if (typeof prototypeMethod !== 'function' || keyName === 'constructor' || keyName.startsWith('_')) {
+          continue
+        }
+
+        const inferredMethod = routeMeta.method ?? (undecoratedMode !== 'private' ? undecoratedMode : undefined)
+        if (!inferredMethod) continue
+
+        routes.set(key, { method: inferredMethod })
         if (this.options.validateRouteOpts && routeMeta.opts) {
           const result = this.options.validateRouteOpts(routeMeta.opts, String(key), routeMeta.path!)
           if (result && typeof result === 'object' && 'then' in result) {

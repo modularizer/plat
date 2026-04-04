@@ -4,6 +4,7 @@ import {defaultLogger} from "./logger"
 
 
 export const DEFAULT_OPTIONS: PLATServerOptions = {
+    undecoratedMode: 'POST',
     errorExposure: 'message',
     serializers: {},
     cors: false,

@@ -81,7 +81,7 @@ export interface OpenAPIClientConfig<THeaders extends Record<string, HeaderValue
     delayMs?: number
     backoffMultiplier?: number
   }
-  transport?: 'auto' | 'http' | 'rpc' | 'file'
+  transport?: 'auto' | 'http' | 'rpc' | 'file' | 'css'
   rpcPath?: string
   callsPath?: string
   hooks?: OpenAPIClientHooks
@@ -361,7 +361,7 @@ class OpenAPIClientImpl<TSpec extends OpenAPISpec = OpenAPISpec, THeaders extend
   private fetchInit?: Omit<RequestInit, 'method' | 'headers' | 'body' | 'signal'>
   private timeoutMs: number
   private retryConfig: { maxAttempts: number; delayMs: number; backoffMultiplier: number }
-  private transportMode: 'http' | 'rpc' | 'file'
+  private transportMode: 'http' | 'rpc' | 'file' | 'css'
   private rpcPath: string
   private callsPath: string
   private hooks?: OpenAPIClientHooks
@@ -469,9 +469,10 @@ class OpenAPIClientImpl<TSpec extends OpenAPISpec = OpenAPISpec, THeaders extend
       return {}
   }
 
-  private resolveTransportMode(mode?: 'auto' | 'http' | 'rpc' | 'file'): 'http' | 'rpc' | 'file' {
+  private resolveTransportMode(mode?: 'auto' | 'http' | 'rpc' | 'file' | 'css'): 'http' | 'rpc' | 'file' | 'css' {
     if (mode && mode !== 'auto') return mode
     if (/^file:\/\//i.test(this.baseUrl)) return 'file'
+    if (/^css:\/\//i.test(this.baseUrl)) return 'css'
     return /^wss?:\/\//i.test(this.baseUrl) ? 'rpc' : 'http'
   }
 

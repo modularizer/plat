@@ -22,8 +22,8 @@ export interface EndpointDef {
     summary?: string
     description?: string
     tag?: string
-    inputSchema: z.ZodTypeAny
-    outputSchema: z.ZodTypeAny
+    inputSchema: z.ZodTypeAny | Record<string, any>
+    outputSchema: z.ZodTypeAny | Record<string, any>
 }
 
 export interface RouteMeta {
@@ -35,8 +35,8 @@ export interface RouteMeta {
     tokenLimit?: TokenLimitMeta
     cache?: CacheMeta
     // For help documentation and param validation
-    inputSchema?: z.ZodTypeAny
-    outputSchema?: z.ZodTypeAny
+    inputSchema?: z.ZodTypeAny | Record<string, any>
+    outputSchema?: z.ZodTypeAny | Record<string, any>
     summary?: string
     description?: string
     // Full route options (allows extensibility for custom keys)
