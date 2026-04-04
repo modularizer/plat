@@ -49,3 +49,7 @@ That one method surface can become:
 - [typescript/](/home/mod/Code/plat/typescript)
 - [python/](/home/mod/Code/plat/python)
 - [docs/](/home/mod/Code/plat/docs)
+
+
+### Dev
+`node scripts/release.mjs "client-side server + docs site" 0.2.0 --publish`

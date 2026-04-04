@@ -7,11 +7,14 @@ import { fileURLToPath } from 'node:url'
 import { bumpVersion, resolveNextVersion, VERSION_FILES } from './bump-version.mjs'
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const releaseMessage = process.argv[2]?.trim()
-const versionSpec = process.argv[3]
+const args = process.argv.slice(2)
+const shouldPublish = args.includes('--publish')
+const filteredArgs = args.filter((arg) => arg !== '--publish')
+const releaseMessage = filteredArgs[0]?.trim()
+const versionSpec = filteredArgs[1]
 
 if (!releaseMessage) {
-  console.error('Usage: node scripts/release.mjs <message> [--patch|--minor|<semver>]')
+  console.error('Usage: node scripts/release.mjs <message> [--patch|--minor|<semver>] [--publish]')
   process.exit(1)
 }
 
@@ -22,13 +25,23 @@ try {
   run('git', ['add', ...VERSION_FILES])
   run('git', ['commit', '-m', `release: ${nextVersion}`, '-m', releaseMessage])
   run('git', ['push'])
-  run('gh', ['release', 'create', `v${nextVersion}`, '--draft', '--title', `v${nextVersion}`, '--notes', releaseMessage])
+  run('gh', [
+    'release',
+    'create',
+    `v${nextVersion}`,
+    ...(shouldPublish ? [] : ['--draft']),
+    '--title',
+    `v${nextVersion}`,
+    '--notes',
+    releaseMessage,
+  ])
 
   console.log(`Release flow prepared for ${nextVersion}`)
   for (const file of touchedFiles) {
     console.log(`- ${file}`)
   }
   console.log(`notes: ${releaseMessage}`)
+  console.log(`published: ${shouldPublish ? 'yes' : 'draft'}`)
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error))
   process.exit(1)
