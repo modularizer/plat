@@ -26,6 +26,10 @@
     ".": {
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
+    },
+    "./client": {
+      "import": "./dist/client-entry.js",
+      "types": "./dist/client-entry.d.ts"
     }
   },
   "files": [

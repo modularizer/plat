@@ -10,7 +10,7 @@ interface FileTransportRuntime {
   parseJson(text: string): unknown
   delay(ms: number): Promise<void>
   fileQueue?: {
-    resolvePaths(): { inbox: string; outbox: string }
+    resolvePaths(): Promise<{ inbox: string; outbox: string }> | { inbox: string; outbox: string }
     pollIntervalMs: number
     mkdir(path: string): Promise<void>
     write(path: string, content: string): Promise<void>
@@ -32,7 +32,7 @@ export function createFileTransportPlugin(runtime: FileTransportRuntime): OpenAP
       if (!runtime.fileQueue) {
         throw new Error('File transport runtime is not configured')
       }
-      const { inbox, outbox } = runtime.fileQueue.resolvePaths()
+      const { inbox, outbox } = await runtime.fileQueue.resolvePaths()
       await runtime.fileQueue.mkdir(inbox)
       await runtime.fileQueue.mkdir(outbox)
       return {
@@ -45,7 +45,7 @@ export function createFileTransportPlugin(runtime: FileTransportRuntime): OpenAP
       if (!runtime.fileQueue) {
         throw new Error('File transport runtime is not configured')
       }
-      const { inbox } = runtime.fileQueue.resolvePaths()
+      const { inbox } = await runtime.fileQueue.resolvePaths()
       await runtime.fileQueue.write(
         `${inbox}/${request.id}.json`,
         JSON.stringify({

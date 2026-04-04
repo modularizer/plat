@@ -1,4 +1,4 @@
-import {EndpointDef} from "./endpoints";
+import type { ClientRouteLike } from './client-route'
 import {ClientError, ServerError} from "./errors";
 import type { PLATRPCEventKind } from "../rpc";
 
@@ -15,7 +15,7 @@ export interface RetryContext {
     maxAttempts: number
     error?: unknown
     response?: Response
-    route: EndpointDef
+    route: ClientRouteLike
 }
 
 

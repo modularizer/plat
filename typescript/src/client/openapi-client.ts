@@ -9,8 +9,6 @@ import {
   type PLATRPCRequest,
   type PLATRPCResponse,
 } from '../rpc'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
 import { extractToolsFromOpenAPI, type ToolDefinition } from './tools'
 import type { DeferredCallOptions } from '../types/client'
 import type { OpenAPIClientTransportPlugin } from './transport-plugin'
@@ -372,6 +370,12 @@ class OpenAPIClientImpl<TSpec extends OpenAPISpec = OpenAPISpec, THeaders extend
   private cachedTools?: ToolDefinition[]
   private rpcSocket?: WebSocket
   private rpcSocketPromise?: Promise<WebSocket>
+  private nodeFileRuntimePromise?: Promise<{
+    mkdir: (path: string) => Promise<void>
+    writeFile: (path: string, content: string) => Promise<void>
+    readFile: (path: string) => Promise<string>
+    join: (...parts: string[]) => string
+  }>
   private rpcPending = new Map<string, {
     resolve: (value: unknown) => void
     reject: (error: Error) => void
@@ -517,9 +521,18 @@ class OpenAPIClientImpl<TSpec extends OpenAPISpec = OpenAPISpec, THeaders extend
       fileQueue: {
         resolvePaths: () => this.resolveFileQueuePaths(),
         pollIntervalMs: 100,
-        mkdir: async (path: string) => { await mkdir(path, { recursive: true }) },
-        write: async (path: string, content: string) => { await writeFile(path, content) },
-        read: async (path: string) => await readFile(path, 'utf8'),
+        mkdir: async (path: string) => {
+          const runtime = await this.getNodeFileRuntime()
+          await runtime.mkdir(path)
+        },
+        write: async (path: string, content: string) => {
+          const runtime = await this.getNodeFileRuntime()
+          await runtime.writeFile(path, content)
+        },
+        read: async (path: string) => {
+          const runtime = await this.getNodeFileRuntime()
+          return await runtime.readFile(path)
+        },
       },
     }
   }
@@ -959,12 +972,34 @@ class OpenAPIClientImpl<TSpec extends OpenAPISpec = OpenAPISpec, THeaders extend
     return this.rpcSocketPromise
   }
 
-  private resolveFileQueuePaths(): { inbox: string; outbox: string } {
+  private async getNodeFileRuntime(): Promise<{
+    mkdir: (path: string) => Promise<void>
+    writeFile: (path: string, content: string) => Promise<void>
+    readFile: (path: string) => Promise<string>
+    join: (...parts: string[]) => string
+  }> {
+    if (!this.nodeFileRuntimePromise) {
+      this.nodeFileRuntimePromise = Promise.all([
+        import('node:fs/promises'),
+        import('node:path'),
+      ]).then(([fs, path]) => ({
+        mkdir: async (targetPath: string) => { await fs.mkdir(targetPath, { recursive: true }) },
+        writeFile: async (targetPath: string, content: string) => { await fs.writeFile(targetPath, content) },
+        readFile: async (targetPath: string) => await fs.readFile(targetPath, 'utf8'),
+        join: (...parts: string[]) => path.join(...parts),
+      }))
+    }
+
+    return this.nodeFileRuntimePromise
+  }
+
+  private async resolveFileQueuePaths(): Promise<{ inbox: string; outbox: string }> {
     const url = new URL(this.baseUrl)
     if (url.protocol !== 'file:') {
       throw new Error(`File transport requires file:// baseUrl, got ${this.baseUrl}`)
     }
     const root = decodeURIComponent(url.pathname)
+    const { join } = await this.getNodeFileRuntime()
     return {
       inbox: join(root, 'inbox'),
       outbox: join(root, 'outbox'),

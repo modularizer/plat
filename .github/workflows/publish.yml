@@ -26,7 +26,6 @@ jobs:
 
   publish-pypi:
     runs-on: ubuntu-latest
-    environment: pypi
     defaults:
       run:
         working-directory: python

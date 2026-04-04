@@ -1,4 +1,4 @@
-import {EndpointDef} from "./endpoints";
+import type { ClientRouteLike } from './client-route'
 
 export interface ErrorPayload {
     code?: string
@@ -43,7 +43,7 @@ export class HttpError extends Error {
 
 
 export abstract class HttpProxyError extends Error {
-    readonly route: EndpointDef | undefined
+    readonly route: ClientRouteLike | undefined
     readonly url: string
     readonly method: string
     readonly status: number | undefined
@@ -56,7 +56,7 @@ export abstract class HttpProxyError extends Error {
     protected constructor(args: {
         name: string
         message: string
-        route?: EndpointDef
+        route?: ClientRouteLike
         url: string
         method: string
         status: number | undefined
@@ -84,7 +84,7 @@ export class ClientError extends HttpProxyError {
     readonly payload: ErrorPayload | undefined
 
     constructor(args: {
-        route?: EndpointDef
+        route?: ClientRouteLike
         url: string
         method: string
         status: number
@@ -160,7 +160,7 @@ export class ServerError extends HttpProxyError {
     readonly payload: ErrorPayload | undefined
 
     constructor(args: {
-        route?: EndpointDef
+        route?: ClientRouteLike
         url: string
         method: string
         status: number
@@ -193,7 +193,7 @@ export class ServerError extends HttpProxyError {
 
 export class NetworkError extends HttpProxyError {
     constructor(args: {
-        route?: EndpointDef
+        route?: ClientRouteLike
         url: string
         method: string
         cause: unknown
@@ -216,7 +216,7 @@ export class NetworkError extends HttpProxyError {
 
 export class TimeoutError extends HttpProxyError {
     constructor(args: {
-        route?: EndpointDef
+        route?: ClientRouteLike
         url: string
         method: string
         cause: unknown

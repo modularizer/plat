@@ -7,7 +7,7 @@
  */
 
 import type { ToolDefinition } from '../types/tools'
-import { toolDefinitionFromOpenAPIOperation } from '../server/tools'
+import { toolDefinitionFromOpenAPIOperation } from '../shared/tools'
 
 export type { ToolDefinition }
 

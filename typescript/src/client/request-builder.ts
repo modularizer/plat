@@ -1,7 +1,8 @@
-import type { BuiltRequest, EndpointDef } from '../types'
+import type { BuiltRequest } from '../types/client'
+import type { ClientRouteLike } from '../types/client-route'
 
 export function buildRequest(
-    route: EndpointDef,
+    route: ClientRouteLike,
     input: Record<string, unknown>,
     baseUrl: string,
 ): BuiltRequest {
