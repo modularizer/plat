@@ -4,28 +4,31 @@ import path from 'node:path'
 import process from 'node:process'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { bumpVersion, VERSION_FILES } from './bump-version.mjs'
+import { bumpVersion, resolveNextVersion, VERSION_FILES } from './bump-version.mjs'
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const nextVersion = process.argv[2]
+const releaseMessage = process.argv[2]?.trim()
+const versionSpec = process.argv[3]
 
-if (!nextVersion) {
-  console.error('Usage: node scripts/release.mjs <semver>')
+if (!releaseMessage) {
+  console.error('Usage: node scripts/release.mjs <message> [--patch|--minor|<semver>]')
   process.exit(1)
 }
 
 try {
+  const nextVersion = resolveNextVersion(versionSpec)
   const touchedFiles = bumpVersion(nextVersion)
 
   run('git', ['add', ...VERSION_FILES])
-  run('git', ['commit', '-m', `release: ${nextVersion}`])
+  run('git', ['commit', '-m', releaseMessage])
   run('git', ['push'])
-  run('gh', ['release', 'create', `v${nextVersion}`, '--draft', '--title', `v${nextVersion}`])
+  run('gh', ['release', 'create', `v${nextVersion}`, '--draft', '--title', releaseMessage, '--notes', releaseMessage])
 
   console.log(`Release flow prepared for ${nextVersion}`)
   for (const file of touchedFiles) {
     console.log(`- ${file}`)
   }
+  console.log(`message: ${releaseMessage}`)
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error))
   process.exit(1)
