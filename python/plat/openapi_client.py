@@ -15,6 +15,7 @@ from urllib.parse import quote, urlparse
 from .client import AsyncClient, SyncClient
 from .file_transport_plugin import create_file_transport_plugin
 from .http_transport_plugin import create_http_transport_plugin, HTTPTransportConfig
+from .css_transport_plugin import CSSTransportConfig, create_css_transport_plugin, fetch_client_side_server_openapi
 from .rpc import DEFAULT_RPC_PATH
 from .rpc_transport_plugin import create_rpc_transport_plugin
 from .response_serialize import serialize_for_response
@@ -258,40 +259,73 @@ def create_openapi_client(
     spec_or_source: str | Path | Mapping[str, Any],
     base_url: str | None = None,
     calls_path: str = "/platCall",
+    css_options: dict[str, Any] | None = None,
     **kwargs: Any,
 ) -> "OpenAPISyncClient":
     spec = load_openapi_spec(spec_or_source)
-    return OpenAPISyncClient(spec, base_url=base_url, calls_path=calls_path, **kwargs)
+    return OpenAPISyncClient(spec, base_url=base_url, calls_path=calls_path, css_options=css_options, **kwargs)
 
 
 def create_async_openapi_client(
     spec_or_source: str | Path | Mapping[str, Any],
     base_url: str | None = None,
     calls_path: str = "/platCall",
+    css_options: dict[str, Any] | None = None,
     **kwargs: Any,
 ) -> "OpenAPIAsyncClient":
     spec = load_openapi_spec(spec_or_source)
-    return OpenAPIAsyncClient(spec, base_url=base_url, calls_path=calls_path, **kwargs)
+    return OpenAPIAsyncClient(spec, base_url=base_url, calls_path=calls_path, css_options=css_options, **kwargs)
 
 
 def create_promise_openapi_client(
     spec_or_source: str | Path | Mapping[str, Any],
     base_url: str | None = None,
     calls_path: str = "/platCall",
+    css_options: dict[str, Any] | None = None,
     **kwargs: Any,
 ) -> "OpenAPIPromiseClient":
     spec = load_openapi_spec(spec_or_source)
-    return OpenAPIPromiseClient(spec, base_url=base_url, calls_path=calls_path, **kwargs)
+    return OpenAPIPromiseClient(spec, base_url=base_url, calls_path=calls_path, css_options=css_options, **kwargs)
+
+
+def connect_client_side_server(
+    base_url: str,
+    *,
+    calls_path: str = "/platCall",
+    css_options: dict[str, Any] | None = None,
+    **kwargs: Any,
+) -> "OpenAPISyncClient":
+    spec = asyncio.run(fetch_client_side_server_openapi(base_url, css_options=css_options))
+    return OpenAPISyncClient(spec, base_url=base_url, calls_path=calls_path, css_options=css_options, **kwargs)
+
+
+async def connect_async_client_side_server(
+    base_url: str,
+    *,
+    calls_path: str = "/platCall",
+    css_options: dict[str, Any] | None = None,
+    **kwargs: Any,
+) -> "OpenAPIAsyncClient":
+    spec = await fetch_client_side_server_openapi(base_url, css_options=css_options)
+    return OpenAPIAsyncClient(spec, base_url=base_url, calls_path=calls_path, css_options=css_options, **kwargs)
 
 
 class _OpenAPIClientMixin:
-    def __init__(self, spec: Mapping[str, Any], base_url: str | None = None, *, calls_path: str = "/platCall") -> None:
+    def __init__(
+        self,
+        spec: Mapping[str, Any],
+        base_url: str | None = None,
+        *,
+        calls_path: str = "/platCall",
+        css_options: dict[str, Any] | None = None,
+    ) -> None:
         self._openapi_spec = dict(spec)
         self._operations = _extract_operations(self._openapi_spec)
         self._operations_by_id = {operation.operation_id: operation for operation in self._operations}
         self._operations_by_snake = {_to_snake_case(operation.operation_id): operation for operation in self._operations}
         self._default_base_url = base_url or self._openapi_spec.get("servers", [{}])[0].get("url", "http://localhost:3000")
         self.calls_path = calls_path
+        self._css_options = dict(css_options or {})
         self._file_poll_interval = 0.1
         self._transport_plugins: list[Any] = []
         self._cached_tools: list[dict[str, Any]] | None = None
@@ -412,6 +446,11 @@ class _OpenAPIClientMixin:
             return create_rpc_transport_plugin(self, operation, is_async=is_async)
         if transport_mode == "file":
             return create_file_transport_plugin(self, operation)
+        if transport_mode == "css":
+            return create_css_transport_plugin(
+                config=None if not self._css_options else CSSTransportConfig(**self._css_options),
+                is_async=is_async,
+            )
         client_ref = self
 
         def _prepare(request: Any) -> tuple[str, dict | None, dict | None]:
@@ -450,6 +489,8 @@ class _OpenAPIClientMixin:
         )
 
     def _transport_mode(self) -> str:
+        if self._default_base_url.startswith("css://"):
+            return "css"
         if self._default_base_url.startswith(("ws://", "wss://")):
             return "rpc"
         if self._is_file_transport():
@@ -519,8 +560,9 @@ class OpenAPISyncClient(_OpenAPIClientMixin, SyncClient):
         retries: int = 3,
         backoff: float = 0.5,
         calls_path: str = "/platCall",
+        css_options: dict[str, Any] | None = None,
     ):
-        _OpenAPIClientMixin.__init__(self, spec, base_url=base_url, calls_path=calls_path)
+        _OpenAPIClientMixin.__init__(self, spec, base_url=base_url, calls_path=calls_path, css_options=css_options)
         SyncClient.__init__(
             self,
             self._default_base_url,
@@ -671,8 +713,9 @@ class OpenAPIAsyncClient(_OpenAPIClientMixin, AsyncClient):
         retries: int = 3,
         backoff: float = 0.5,
         calls_path: str = "/platCall",
+        css_options: dict[str, Any] | None = None,
     ):
-        _OpenAPIClientMixin.__init__(self, spec, base_url=base_url, calls_path=calls_path)
+        _OpenAPIClientMixin.__init__(self, spec, base_url=base_url, calls_path=calls_path, css_options=css_options)
         AsyncClient.__init__(
             self,
             self._default_base_url,

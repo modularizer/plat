@@ -1,14 +1,26 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from plat.cli_main import generate_python_client
-from plat.openapi_client import DeferredCallHandle, OpenAPIPromiseClient, OpenAPISyncClient, PLATPromise
+import plat.openapi_client as openapi_client_module
+from plat.openapi_client import (
+    DeferredCallHandle,
+    OpenAPIPromiseClient,
+    OpenAPISyncClient,
+    PLATPromise,
+    connect_async_client_side_server,
+    connect_client_side_server,
+)
+from plat.css_identity import CSSAuthorityKeyPair, trust_on_first_use
+from plat.authority_server import create_authority_server_controller, AuthorityServerOptions
 
 
 SPEC = {
@@ -160,6 +172,59 @@ class RecordingDeferredOpenAPIClient(OpenAPISyncClient):
 
 
 class OpenAPIClientTests(unittest.TestCase):
+    def test_python_authority_controller_uses_standard_methods(self) -> None:
+        key_pair = CSSAuthorityKeyPair(
+            public_key_jwk={
+                "kty": "EC",
+            },
+            private_key_jwk={
+                "kty": "EC",
+            },
+        )
+        known_host = trust_on_first_use(
+            "browser-math",
+            {
+                "kty": "EC",
+                "crv": "P-256",
+                "x": "demo-x",
+                "y": "demo-y",
+            },
+        )
+        with patch("plat.authority_server.create_signed_authority_record") as create_record:
+            create_record.side_effect = lambda *_args, **kwargs: type(
+                "SignedRecord",
+                (),
+                {
+                    "protocol": "plat-css-authority-v1",
+                    "server_name": kwargs["server_name"],
+                    "public_key_jwk": kwargs["public_key_jwk"],
+                    "key_id": kwargs.get("key_id"),
+                    "authority_name": kwargs.get("authority_name"),
+                    "issued_at": 123,
+                    "signature": "sig",
+                },
+            )()
+
+            Controller = create_authority_server_controller(
+                AuthorityServerOptions(
+                    authority_key_pair=key_pair,
+                    known_hosts={"browser-math": known_host},
+                    authority_name="demo-authority",
+                )
+            )
+            api = Controller()
+            resolved = api.resolveAuthorityHost("browser-math")
+            listed = api.listAuthorityHosts()
+            exported = api.exportAuthorityHosts()
+
+            self.assertEqual(sorted([name for name in dir(api) if name in {"resolveAuthorityHost", "listAuthorityHosts", "exportAuthorityHosts"}]), [
+                "exportAuthorityHosts",
+                "listAuthorityHosts",
+                "resolveAuthorityHost",
+            ])
+            self.assertEqual(resolved["serverName"], "browser-math")
+            self.assertEqual(listed["hosts"][0]["serverName"], "browser-math")
+            self.assertEqual(exported["records"][0]["serverName"], "browser-math")
     def test_rpc_url_defaults_to_rpc_path_for_websocket_base_urls(self) -> None:
         client = RecordingOpenAPIClient()
         client._default_base_url = "ws://localhost:3000"
@@ -191,6 +256,51 @@ class OpenAPIClientTests(unittest.TestCase):
             client.calls[-1],
             ("POST", "/products", None, {"name": "Banana", "price": 2.25}),
         )
+
+    def test_css_transport_mode_is_detected_from_base_url(self) -> None:
+        client = RecordingOpenAPIClient()
+        client._default_base_url = "css://browser-math"
+
+        self.assertEqual(client._transport_mode(), "css")
+
+    def test_connect_client_side_server_fetches_spec_and_builds_client(self) -> None:
+        original_fetch = openapi_client_module.fetch_client_side_server_openapi
+        try:
+            async def fake_fetch(base_url: str, *, css_options=None):
+                self.assertEqual(base_url, "css://browser-math")
+                self.assertEqual(css_options, {"mqtt_topic": "demo/topic"})
+                return SPEC
+
+            openapi_client_module.fetch_client_side_server_openapi = fake_fetch
+            client = connect_client_side_server(
+                "css://browser-math",
+                css_options={"mqtt_topic": "demo/topic"},
+            )
+            self.assertIsInstance(client, OpenAPISyncClient)
+            self.assertEqual(client._default_base_url, "css://browser-math")
+            self.assertEqual(client._css_options, {"mqtt_topic": "demo/topic"})
+        finally:
+            openapi_client_module.fetch_client_side_server_openapi = original_fetch
+
+    def test_connect_async_client_side_server_fetches_spec_and_builds_client(self) -> None:
+        original_fetch = openapi_client_module.fetch_client_side_server_openapi
+        try:
+            async def fake_fetch(base_url: str, *, css_options=None):
+                self.assertEqual(base_url, "css://browser-math")
+                self.assertEqual(css_options, {"mqtt_topic": "demo/topic"})
+                return SPEC
+
+            openapi_client_module.fetch_client_side_server_openapi = fake_fetch
+            client = asyncio.run(
+                connect_async_client_side_server(
+                    "css://browser-math",
+                    css_options={"mqtt_topic": "demo/topic"},
+                )
+            )
+            self.assertEqual(client._default_base_url, "css://browser-math")
+            self.assertEqual(client._css_options, {"mqtt_topic": "demo/topic"})
+        finally:
+            openapi_client_module.fetch_client_side_server_openapi = original_fetch
 
     def test_extracts_tool_metadata_from_openapi(self) -> None:
         client = RecordingOpenAPIClient()

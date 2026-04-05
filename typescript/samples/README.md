@@ -1,6 +1,6 @@
 # plat Sample Projects
 
-Six examples showing different project structures, generation targets, and deployment patterns.
+Seven examples showing different project structures, generation targets, and deployment patterns.
 
 ## At a Glance
 
@@ -12,6 +12,7 @@ Six examples showing different project structures, generation targets, and deplo
 | 4-saas-analytics | `src/index.ts` | `src/api/` | `shared/` | openapi + Python client + CLI | JWT |
 | 5-client-only | N/A | N/A | N/A | TS + JS(ESM+CJS) + Python + CLIs | N/A |
 | 6-client-side-server | `server.html` + `client.html` | browser-hosted | inline editor | static HTML client/server over MQTT-signaled WebRTC | N/A |
+| 7-python-client-side-server | `server.html` + `client.html` + `python-client.html` | browser-hosted Python | inline Python editor | static HTML Python server with JS and Python browser clients over MQTT-signaled WebRTC | N/A |
 
 ---
 
@@ -79,6 +80,23 @@ Two static HTML files:
 - `client.html` acts as the browser-side client, with one-line request snippets and an onscreen response/console view
 
 They communicate through MQTT-signaled WebRTC using the `css://server-name` address shape.
+
+The transport can also persist a host identity keypair and let clients remember or verify the server's public key.
+
+---
+
+## 7. Python Client-Side Server
+
+Two static HTML files again, but this time the browser-hosted server is written in Python via `plat_browser` and launched by the TypeScript browser host utilities.
+
+- `server.html` runs browser Python code and exposes it as a plat client-side server
+- `client.html` connects to it like any other OpenAPI-backed plat client
+
+This is the browser-Python parallel of sample 6.
+
+- `python-client.html` runs browser Python client code that connects with `connect_client_side_server(...)`
+
+Like sample 6, the underlying `css://` transport can keep a stable host identity with persisted keys and known-host trust.
 
 ---
 

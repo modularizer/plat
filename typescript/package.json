@@ -34,6 +34,10 @@
     "./client-server": {
       "import": "./dist/client-server-entry.js",
       "types": "./dist/client-server-entry.d.ts"
+    },
+    "./python-browser": {
+      "import": "./dist/python-browser-entry.js",
+      "types": "./dist/python-browser-entry.d.ts"
     }
   },
   "files": [
@@ -41,7 +45,7 @@
     "bin"
   ],
   "scripts": {
-    "build": "tsc && tsx scripts/rewrite-relative-imports.ts",
+    "build": "tsx scripts/gen-python-browser-sources.ts && tsc && tsx scripts/rewrite-relative-imports.ts",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.scripts.json",
     "gen:samples": "tsx scripts/gen-samples.ts",
     "test": "tsx scripts/gen-samples.ts && jest",
@@ -66,6 +70,7 @@
     "rpc"
   ],
   "dependencies": {
+    "@roamhq/wrtc": "^0.10.0",
     "chokidar": "^5.0.0",
     "dotenv": "^16.4.0",
     "express": "^5.2.1",

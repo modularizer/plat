@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>plat Browser Python Client</title>
+    <style>
+      body {
+        margin: 0;
+        font-family: "Avenir Next", "Segoe UI", sans-serif;
+        background: #eef3ef;
+        color: #192223;
+      }
+      .shell {
+        max-width: 980px;
+        margin: 0 auto;
+        padding: 20px;
+        display: grid;
+        gap: 16px;
+      }
+      .panel {
+        background: rgba(255, 255, 255, 0.88);
+        border: 1px solid #cfddd5;
+        border-radius: 18px;
+        padding: 16px;
+      }
+      h1, h2, p { margin: 0; }
+      .meta { color: #5a706d; }
+      textarea, button {
+        font: inherit;
+      }
+      textarea {
+        width: 100%;
+        min-height: 220px;
+        resize: vertical;
+        border-radius: 14px;
+        border: 1px solid #cfddd5;
+        background: white;
+        color: #192223;
+        padding: 12px;
+        font-family: "JetBrains Mono", "Fira Code", monospace;
+        font-size: 13px;
+        line-height: 1.65;
+      }
+      button {
+        border: 0;
+        border-radius: 999px;
+        padding: 10px 14px;
+        background: #24695b;
+        color: white;
+        font-weight: 700;
+        cursor: pointer;
+      }
+      pre {
+        margin: 0;
+        padding: 12px;
+        border-radius: 14px;
+        background: #162022;
+        color: #d4ece5;
+        white-space: pre-wrap;
+        font-family: "JetBrains Mono", "Fira Code", monospace;
+        font-size: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <div class="panel">
+        <h1>plat Browser Python Client</h1>
+        <p class="meta">Write Python, connect to a browser-hosted plat server, and call it with kwargs.</p>
+      </div>
+
+      <div class="panel">
+        <h2>Python Client</h2>
+        <div style="margin-top:12px;">
+          <textarea id="sourceEditor">from plat_browser import connect_client_side_server
+
+client = await connect_client_side_server("css://browser-python-math")
+await client.add(a=20, b=22)</textarea>
+        </div>
+        <div style="margin-top:12px;">
+          <button id="runButton">Run</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Result</h2>
+        <pre id="resultEl"></pre>
+      </div>
+    </div>
+
+    <script type="importmap">
+      {
+        "imports": {
+          "mqtt": "https://esm.sh/mqtt@5?bundle"
+        }
+      }
+    </script>
+    <script type="module">
+      import {
+        createPythonBrowserClientExecutor,
+        formatPythonBrowserValue,
+      } from '../../dist/python-browser-entry.js'
+
+      const sourceEditor = document.getElementById('sourceEditor')
+      const runButton = document.getElementById('runButton')
+      const resultEl = document.getElementById('resultEl')
+      const executor = createPythonBrowserClientExecutor()
+
+      async function run() {
+        resultEl.textContent = 'Running...'
+        try {
+          const result = await executor.run(sourceEditor.value)
+          resultEl.textContent = formatPythonBrowserValue(result)
+        } catch (error) {
+          resultEl.textContent = formatPythonBrowserValue(error)
+          console.error(error)
+        }
+      }
+
+      runButton.addEventListener('click', () => void run())
+    </script>
+  </body>
+</html>

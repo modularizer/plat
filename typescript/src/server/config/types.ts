@@ -2,6 +2,7 @@ import { AuthMode, CacheController, RateLimitConfigs, RateLimitController, Token
 import { Logger } from "./logger"
 import type { InMemoryCallSessionController } from "../call-sessions"
 import type { PLATServerProtocolPlugin } from "../protocol-plugin"
+import type { PLATAuthorityServerOptions } from "../authority-server"
 
 
 export interface AuthHandler {
@@ -64,6 +65,16 @@ export interface PLATServerOptions {
      * Hook called for each incoming request
      */
     onRequest?: (req: any, res: any, path: string, method: string) => void | Promise<void>
+
+    /**
+     * Hook called once the server starts listening.
+     */
+    onStart?: (info: { protocol: string; host: string; port: number }) => void | Promise<void>
+
+    /**
+     * Hook called when the underlying HTTP server closes.
+     */
+    onStop?: (info: { protocol: string; host: string; port: number }) => void | Promise<void>
 
     /**
      * Hook called for each successful response
@@ -175,6 +186,11 @@ export interface PLATServerOptions {
         // Include X-Cache header (true/false) in all responses (default: true)
         cacheHeader?: boolean
     }
+
+    /**
+     * Optional packaged authority server endpoints for serving signed css:// host records.
+     */
+    authorityServer?: false | PLATAuthorityServerOptions
 
     /**
      * Custom route options validation

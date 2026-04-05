@@ -16,6 +16,7 @@ import { createHttpTransportPlugin } from './http-transport-plugin'
 import { createRpcTransportPlugin } from './rpc-transport-plugin'
 import { createFileTransportPlugin } from './file-transport-plugin'
 import { executeClientTransportPlugin, type OpenAPIClientTransportRequest } from './transport-plugin'
+import { createClientSideServerMQTTWebRTCTransportPlugin } from '../client-side-server/mqtt-webrtc'
 
 export type HeadersInit<TCustom extends Record<string, HeaderValue | undefined> = {}> =
   | TypedHeaders<TCustom>
@@ -408,8 +409,12 @@ class OpenAPIClientImpl<TSpec extends OpenAPISpec = OpenAPISpec, THeaders extend
     this.rpcPath = options.rpcPath ?? DEFAULT_RPC_PATH
     this.callsPath = options.callsPath ?? '/platCall'
     this.hooks = options.hooks
+    const defaultTransportPlugins = this.baseUrl.startsWith('css://')
+      ? [createClientSideServerMQTTWebRTCTransportPlugin()]
+      : []
     this.transportPlugins = [
       ...(options.transportPlugins ?? []),
+      ...defaultTransportPlugins,
       createHttpTransportPlugin(this.createBuiltInTransportRuntime()),
       createRpcTransportPlugin(this.createBuiltInTransportRuntime()),
       createFileTransportPlugin(this.createBuiltInTransportRuntime()),

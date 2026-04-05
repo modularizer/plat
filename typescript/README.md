@@ -508,6 +508,64 @@ Transport plugins follow a generic lifecycle:
 - receive result
 - disconnect
 
+### css:// identity and trust
+
+Browser-hosted `css://` servers can keep a stable host identity too.
+
+- Generate keypairs with `generateClientSideServerIdentityKeyPair()`
+- Persist them with `saveClientSideServerIdentityKeyPair()` or `getOrCreateClientSideServerIdentityKeyPair()`
+- Pin known hosts with `trustClientSideServerOnFirstUse()`
+- Optionally verify signed name-to-key records from a trusted authority
+
+```ts
+import {
+  createFetchClientSideServerAuthorityServer,
+  createClientSideServerMQTTWebRTCTransportPlugin,
+  getOrCreateClientSideServerIdentityKeyPair,
+} from '@modularizer/plat/client'
+
+const knownHosts = {}
+const transport = createClientSideServerMQTTWebRTCTransportPlugin({
+  identity: {
+    keyPair: await getOrCreateClientSideServerIdentityKeyPair({
+      storageKey: 'plat-css:keypair:browser-math',
+    }),
+    knownHosts,
+    trustOnFirstUse: true,
+    authorityServers: [
+      createFetchClientSideServerAuthorityServer({
+        baseUrl: 'https://authority.example.com',
+        publicKeyJwk: authorityPublicKeyJwk,
+      }),
+    ],
+  },
+})
+```
+
+The goal is not a global network lease. The goal is proving "this is the same host key I trusted last time" and optionally resolving known server names through a signed authority record.
+
+You can also turn any normal plat server into an authority server with a standard method surface:
+
+```ts
+const knownHosts = {}
+const authorityKeyPair = await getOrCreateClientSideServerIdentityKeyPair({
+  storageKey: 'plat-authority:keypair',
+})
+
+const server = createServer({
+  authorityServer: {
+    authorityName: 'demo-authority',
+    authorityKeyPair,
+    knownHosts,
+  },
+}, OrdersApi)
+```
+
+That exposes the same methods everywhere:
+- `resolveAuthorityHost`
+- `listAuthorityHosts`
+- `exportAuthorityHosts`
+
 ### Server-side protocol plugins
 
 Protocol plugins are how tool calls arrive and how updates/results leave.

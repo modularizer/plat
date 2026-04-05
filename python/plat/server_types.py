@@ -12,6 +12,12 @@ HttpMethod = Literal["GET", "POST", "PUT", "PATCH", "DELETE"]
 ErrorExposure = Literal["none", "message", "full"]
 InputCoercer = Callable[[Any], Any]
 OutputSerializer = Callable[[Any], Any]
+RequestHook = Callable[[Any, Any, str, str], Any]
+ResponseHook = Callable[[Any, Any, int, Any], Any]
+ErrorHook = Callable[[Any, Any, Exception, int], Any]
+HandleErrorHook = Callable[[Any, Any, Exception], bool | Any]
+LifecycleHook = Callable[[dict[str, Any]], Any]
+HttpMiddleware = Callable[[Any, Any], Any]
 
 
 @dataclass
@@ -83,6 +89,14 @@ class PLATServerOptions:
     error_exposure: ErrorExposure = "message"
     cors: CORSOptions | bool = False
     headers: dict[str, str] = field(default_factory=dict)
+    logger: Any | None = None
+    on_request: RequestHook | None = None
+    on_response: ResponseHook | None = None
+    on_error: ErrorHook | None = None
+    handle_error: HandleErrorHook | None = None
+    on_start: LifecycleHook | None = None
+    on_stop: LifecycleHook | None = None
+    middlewares: list[HttpMiddleware] = field(default_factory=list)
     port: int = 3000
     host: str = "localhost"
     protocol: str = "http"
@@ -95,6 +109,7 @@ class PLATServerOptions:
     rate_limit: dict[str, RateLimitController | RateLimitConfigs | bool | None] | None = None
     token_limit: dict[str, TokenLimitController | TokenLimitConfigs | bool | None] | None = None
     cache: dict[str, CacheController | bool | None] | None = None
+    authority_server: Any | bool | None = None
     allowed_method_prefixes: str | list[str] = "*"
     dis_allowed_method_prefixes: list[str] = field(default_factory=list)
     param_coercions: dict[str, str] = field(

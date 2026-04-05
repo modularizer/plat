@@ -48,6 +48,7 @@ That one method surface can become:
 
 - [typescript/](/home/mod/Code/plat/typescript)
 - [python/](/home/mod/Code/plat/python)
+- [python_browser/](/home/mod/Code/plat/python_browser)
 - [docs/](/home/mod/Code/plat/docs)
 
 

@@ -23,6 +23,7 @@ import { createRpcProtocolPlugin, type RpcProtocolPluginOptions } from './rpc-pr
 import { createFileQueueProtocolPlugin } from './file-queue-protocol-plugin'
 import { PLATOperationRegistry } from './operation-registry'
 import { PLATServerCore } from './core'
+import { createAuthorityServerController } from './authority-server'
 
 interface OperationExecutionResult {
     kind: 'success' | 'help'
@@ -35,6 +36,7 @@ export class PLATServer {
     private app: Express
     private options: PLATServerOptions
     private logger: Logger
+    private httpServer?: HttpServer
     private routes: Array<{ method: string; path: string; methodName?: string }> = []
     private registeredMethodNames = new Set<string>()
     private registeredControllerNames = new Set<string>()
@@ -93,6 +95,10 @@ export class PLATServer {
         // Auto-register controllers passed to constructor
         for (const ControllerClass of ControllerClasses) {
             this.register(ControllerClass)
+        }
+
+        if (this.options.authorityServer) {
+            this.register(createAuthorityServerController(this.options.authorityServer))
         }
     }
 
@@ -595,6 +601,13 @@ export class PLATServer {
                         // Call onError hook
                         if (this.options.onError) {
                             await this.options.onError(req, res, err, statusCode)
+                        }
+
+                        if (this.options.handleError) {
+                            const handled = await this.options.handleError(req, res, err)
+                            if (handled) {
+                                return
+                            }
                         }
 
                         // Build error response based on exposure level
@@ -1306,12 +1319,25 @@ export class PLATServer {
         // Wrap the callback to print startup message and call user callback
         const wrappedCallback = () => {
             this.printStartupMessage(finalProtocol, finalHost, finalPort)
+            void this.options.onStart?.({
+                protocol: finalProtocol,
+                host: finalHost,
+                port: finalPort,
+            })
             if (userCallback) {
                 userCallback()
             }
         }
 
         const server = createHttpServer(this.app)
+        this.httpServer = server
+        server.on('close', () => {
+            void this.options.onStop?.({
+                protocol: finalProtocol,
+                host: finalHost,
+                port: finalPort,
+            })
+        })
         const hostContext: PLATServerHostContext = {
             kind: 'node-http',
             app: this.app,
@@ -1342,6 +1368,17 @@ export class PLATServer {
         }
         server.listen(finalPort, finalHost, wrappedCallback)
         return this
+    }
+
+    async close(): Promise<void> {
+        if (!this.httpServer) return
+        await new Promise<void>((resolve, reject) => {
+            this.httpServer?.close((error) => {
+                if (error) reject(error)
+                else resolve()
+            })
+        })
+        this.httpServer = undefined
     }
 
     /**

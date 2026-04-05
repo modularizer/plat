@@ -1,0 +1,14 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "plat-browser"
+version = "0.1.0"
+description = "Browser-hosted Python runtime for plat"
+readme = "README.md"
+license = "Unlicense"
+requires-python = ">=3.10"
+
+[tool.hatch.build.targets.wheel]
+packages = ["plat_browser"]

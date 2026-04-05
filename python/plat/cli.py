@@ -7,8 +7,8 @@ import os
 import shutil
 import sys
 import urllib.parse
-
 from .logging import get_logger
+from .openapi_client import create_openapi_client
 
 logger = get_logger("plat.cli")
 
@@ -340,37 +340,9 @@ def _replace_path_params(path, values):
 
 
 def request_spec_command(spec, command, input_data, base_url=None):
-    import httpx
-
     base_url = base_url or os.environ.get("API_URL") or spec.get("servers", [{}])[0].get("url", "http://localhost:3000")
-    path_params = [p["name"] for p in command.get("params", []) if p.get("in") == "path"]
-    query_params = [p["name"] for p in command.get("params", []) if p.get("in") == "query"]
-    body_params = [p["name"] for p in command.get("params", []) if p.get("in") == "body"]
-
-    path_values = {name: input_data[name] for name in path_params if name in input_data}
-    url = base_url.rstrip("/") + _replace_path_params(command["path"], path_values)
-    query_values = {name: input_data[name] for name in query_params if name in input_data}
-    body_values = {name: input_data[name] for name in body_params if name in input_data}
-
-    headers = {}
-    token = os.environ.get("API_TOKEN")
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-
-    with httpx.Client(timeout=30.0, headers=headers) as client:
-        response = client.request(
-            command["method"],
-            url,
-            params={k: v for k, v in query_values.items() if v is not None} or None,
-            json={k: v for k, v in body_values.items() if v is not None} or None,
-        )
-        response.raise_for_status()
-        if not response.content:
-            return None
-        content_type = response.headers.get("content-type", "")
-        if "json" in content_type:
-            return response.json()
-        return response.text
+    client = create_openapi_client(spec, base_url=base_url)
+    return client.call_route(command["method"], command["path"], input_data)
 
 
 def run_spec_cli(spec, argv=None, base_url=None):

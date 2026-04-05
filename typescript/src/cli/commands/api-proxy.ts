@@ -5,6 +5,8 @@
 
 import fs from 'fs'
 import path from 'path'
+import { OpenAPIClient } from '../../client/openapi-client'
+import { createClientSideServerMQTTWebRTCTransportPlugin } from '../../client-side-server/mqtt-webrtc'
 
 interface OpenAPISpec {
   openapi: string
@@ -155,61 +157,6 @@ function findOperation(
 }
 
 /**
- * Extract path parameter names from a path template
- * e.g., /api/orders/{id}/items/{itemId} → ['id', 'itemId']
- */
-function extractPathParamNames(pathTemplate: string): string[] {
-  const matches = pathTemplate.match(/{([^}]+)}/g) || []
-  return matches.map(m => m.slice(1, -1))
-}
-
-/**
- * Build the request URL with path substitutions and query parameters
- */
-function buildUrl(
-  baseUrl: string,
-  pathTemplate: string,
-  params: Record<string, any>,
-  method: string
-): { url: string; body?: string } {
-  let url = baseUrl + pathTemplate
-  const remainingParams: Record<string, any> = { ...params }
-
-  // Extract and substitute path parameters
-  const pathParamNames = extractPathParamNames(pathTemplate)
-  for (const paramName of pathParamNames) {
-    if (remainingParams.hasOwnProperty(paramName)) {
-      const value = remainingParams[paramName]
-      url = url.replace(`{${paramName}}`, encodeURIComponent(String(value)))
-      delete remainingParams[paramName]
-    }
-  }
-
-  // Handle remaining parameters based on HTTP method
-  let body: string | undefined
-  if (['GET', 'HEAD', 'DELETE'].includes(method.toUpperCase())) {
-    // Add as query parameters
-    const searchParams = new URLSearchParams()
-    for (const [key, value] of Object.entries(remainingParams)) {
-      if (value !== undefined && value !== null) {
-        searchParams.append(key, String(value))
-      }
-    }
-    const queryString = searchParams.toString()
-    if (queryString) {
-      url += (url.includes('?') ? '&' : '?') + queryString
-    }
-  } else {
-    // PUT/POST/PATCH: add to body
-    if (Object.keys(remainingParams).length > 0) {
-      body = JSON.stringify(remainingParams)
-    }
-  }
-
-  return { url, body }
-}
-
-/**
  * Check if a string is an HTTP method
  */
 function isHttpMethod(str: string): boolean {
@@ -289,68 +236,25 @@ export async function apiProxy(cwd: string, argv: string[]): Promise<void> {
       process.env.BASE_URL ||
       'http://localhost:3000'
 
-    // Build request URL
-    const { url, body } = buildUrl(baseUrl, operation.path, parsed.params, operation.method)
-
-    // Build fetch options
-    const fetchOptions: RequestInit = {
-      method: operation.method.toUpperCase(),
-      headers: {
-        'Content-Type': 'application/json',
-      } as Record<string, string>,
-    }
-
     // Add timeout if specified
     const timeoutMs = parsed.options.timeoutMs || parsed.options.timeout
-    if (timeoutMs) {
-      const controller = new AbortController()
-      const timeout = setTimeout(() => controller.abort(), timeoutMs)
-      fetchOptions.signal = controller.signal
-    }
 
     // Add Authorization header if token is available
     const token =
       process.env.PLAT_TOKEN ||
       process.env.API_TOKEN ||
       process.env.AUTH_TOKEN
-    if (token) {
-      ;(fetchOptions.headers as Record<string, string>)['Authorization'] = `Bearer ${token}`
-    }
-
-    // Add body if present
-    if (body) {
-      fetchOptions.body = body
-    }
-
-    // Make request
-    const response = await fetch(url, fetchOptions)
-
-    // Handle response
-    const contentType = response.headers.get('content-type') || ''
-    let responseBody: any = null
-
-    if (contentType.includes('application/json')) {
-      responseBody = await response.json()
-    } else {
-      responseBody = await response.text()
-    }
-
-    if (!response.ok) {
-      console.error(`❌ Error: ${response.status} ${response.statusText}`)
-      if (typeof responseBody === 'object') {
-        console.error(JSON.stringify(responseBody, null, 2))
-      } else {
-        console.error(responseBody)
-      }
-      process.exit(1)
-    }
-
-    // Print formatted response
-    if (typeof responseBody === 'object') {
-      console.log(JSON.stringify(responseBody, null, 2))
-    } else {
-      console.log(responseBody)
-    }
+    const client = new OpenAPIClient(spec as any, {
+      baseUrl,
+      timeoutMs,
+      headers: token ? { authorization: `Bearer ${token}` } : undefined,
+      transportPlugins: baseUrl.startsWith('css://')
+        ? [createClientSideServerMQTTWebRTCTransportPlugin()]
+        : undefined,
+    })
+    const method = operation.method.toLowerCase() as 'get' | 'post' | 'put' | 'patch' | 'delete'
+    const responseBody = await client[method](operation.path as any, parsed.params as any)
+    console.log(typeof responseBody === 'string' ? responseBody : JSON.stringify(responseBody, null, 2))
   } catch (error: any) {
     console.error('❌ Error:', error.message)
     process.exit(1)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import pathlib
@@ -8,6 +9,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from .cli import run_spec_cli
+from .css_transport_plugin import fetch_client_side_server_openapi
 from .logging import get_logger
 from .openapi_codegen import generate_python_client as generate_python_typed_client
 from .server import create_server
@@ -361,6 +363,9 @@ def load_spec(src: str | None) -> tuple[dict[str, Any], str, str | None]:
         fail("No OpenAPI spec found. Expected openapi.json/openapi.yaml/openapi.yml or pass --src.")
 
     normalized = normalize_source(src)
+    if is_css_url(normalized):
+        spec = asyncio.run(fetch_client_side_server_openapi(normalized))
+        return spec, normalized, normalized
     if is_url(normalized):
         import httpx
 
@@ -392,6 +397,8 @@ def parse_spec(raw: str, source: str) -> dict[str, Any]:
 
 
 def normalize_source(src: str) -> str:
+    if is_css_url(src):
+        return src
     if is_url(src):
         return src
     candidate = pathlib.Path(src).resolve()
@@ -448,6 +455,10 @@ def looks_like_host(value: str) -> bool:
 
 def is_url(value: str) -> bool:
     return value.startswith("http://") or value.startswith("https://")
+
+
+def is_css_url(value: str) -> bool:
+    return value.startswith("css://")
 
 
 def write_text(path_value: pathlib.Path, content: str) -> None:

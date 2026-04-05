@@ -37,11 +37,41 @@ export interface ClientSideServerEventMessage {
   data?: unknown
 }
 
+export interface ClientSideServerPeerMessage {
+  platcss: 'peer'
+  event: string
+  data?: unknown
+  fromPeerId?: string
+  fromServerName?: string
+}
+
 export type ClientSideServerResponse =
   | ClientSideServerSuccessResponse
   | ClientSideServerErrorResponse
 
-export type ClientSideServerMessage =
+export type ClientSideServerRPCMessage =
   | ClientSideServerRequest
   | ClientSideServerResponse
   | ClientSideServerEventMessage
+
+export type ClientSideServerMessage =
+  | ClientSideServerRPCMessage
+  | ClientSideServerPeerMessage
+
+export function isClientSideServerPeerMessage(message: ClientSideServerMessage): message is ClientSideServerPeerMessage {
+  return 'platcss' in message && message.platcss === 'peer'
+}
+
+export function isClientSideServerRequestMessage(message: ClientSideServerMessage): message is ClientSideServerRequest {
+  return 'jsonrpc' in message && 'method' in message && 'path' in message
+}
+
+export function isClientSideServerEventMessage(message: ClientSideServerMessage): message is ClientSideServerEventMessage {
+  return 'jsonrpc' in message && 'event' in message && message.ok === true
+}
+
+export function isClientSideServerResponseMessage(
+  message: ClientSideServerMessage,
+): message is ClientSideServerResponse {
+  return 'jsonrpc' in message && 'ok' in message && !('event' in message) && !('method' in message)
+}

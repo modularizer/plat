@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>plat Browser Python Server</title>
+    <style>
+      body {
+        margin: 0;
+        font-family: "Avenir Next", "Segoe UI", sans-serif;
+        background: #0a1218;
+        color: #e8f2ff;
+      }
+      .shell {
+        max-width: 1100px;
+        margin: 0 auto;
+        padding: 20px;
+        display: grid;
+        gap: 16px;
+      }
+      .panel {
+        background: rgba(9, 17, 27, 0.92);
+        border: 1px solid rgba(143, 165, 186, 0.16);
+        border-radius: 18px;
+        padding: 16px;
+      }
+      h1, h2, p { margin: 0; }
+      .meta { color: #8ea7c1; }
+      .row {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+      textarea, code, pre, input, button {
+        font: inherit;
+      }
+      textarea, input {
+        width: 100%;
+        border-radius: 14px;
+        border: 1px solid rgba(143, 165, 186, 0.16);
+        background: #081019;
+        color: #e8f2ff;
+        padding: 12px;
+      }
+      textarea {
+        min-height: 420px;
+        resize: vertical;
+        font-family: "JetBrains Mono", "Fira Code", monospace;
+        font-size: 13px;
+        line-height: 1.65;
+      }
+      button {
+        border: 0;
+        border-radius: 999px;
+        padding: 10px 14px;
+        background: #4bd3aa;
+        color: #08261e;
+        font-weight: 700;
+        cursor: pointer;
+      }
+      .secondary {
+        background: rgba(143, 165, 186, 0.14);
+        color: #e8f2ff;
+      }
+      .status {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.05);
+      }
+      .dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 999px;
+        background: #d48f44;
+      }
+      .dot.live {
+        background: #4bd3aa;
+      }
+      pre {
+        margin: 0;
+        padding: 12px;
+        border-radius: 14px;
+        background: #061019;
+        color: #d5e9e0;
+        white-space: pre-wrap;
+        font-family: "JetBrains Mono", "Fira Code", monospace;
+        font-size: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <div class="panel">
+        <h1>plat Browser Python Server</h1>
+        <p class="meta">Hidden Python runtime, real MQTT-signaled WebRTC transport, no runtime-specific API in the user code.</p>
+      </div>
+
+      <div class="panel">
+        <div class="row" style="justify-content:space-between; margin-bottom: 12px;">
+          <h2>Server Source</h2>
+          <div class="row">
+            <div class="status"><span class="dot" id="statusDot"></span><span id="statusText">Idle</span></div>
+            <button id="startButton">Start / Reload</button>
+          </div>
+        </div>
+        <textarea id="sourceEditor">from plat_browser import Controller, POST, serve_client_side_server
+
+@Controller()
+class MathApi:
+    """Simple browser-hosted Python math."""
+
+    @POST()
+    def add(self, a: int, b: int, ctx):
+        return a + b
+
+serve_client_side_server("browser-python-math", [MathApi])</textarea>
+      </div>
+
+      <div class="panel">
+        <h2>Connection</h2>
+        <pre id="connectionInfo">css://browser-python-math</pre>
+      </div>
+
+      <div class="panel">
+        <h2>Console</h2>
+        <pre id="consoleEl"></pre>
+      </div>
+    </div>
+
+    <script type="importmap">
+      {
+        "imports": {
+          "mqtt": "https://esm.sh/mqtt@5?bundle"
+        }
+      }
+    </script>
+    <script type="module">
+      import {
+        createPythonClientSideServerHost,
+        formatPythonBrowserValue,
+      } from '../../dist/python-browser-entry.js'
+
+      const sourceEditor = document.getElementById('sourceEditor')
+      const statusDot = document.getElementById('statusDot')
+      const statusText = document.getElementById('statusText')
+      const consoleEl = document.getElementById('consoleEl')
+      const connectionInfo = document.getElementById('connectionInfo')
+      const startButton = document.getElementById('startButton')
+      const host = createPythonClientSideServerHost()
+
+      host.subscribe((state) => {
+        statusText.textContent = state.status[0].toUpperCase() + state.status.slice(1)
+        statusDot.classList.toggle('live', state.status === 'live')
+        connectionInfo.textContent = state.connectionUrl ?? 'css://browser-python-math'
+
+        if (state.status === 'live' && state.connectionUrl) {
+          consoleEl.textContent = `Server started at ${state.connectionUrl}\n`
+          return
+        }
+        if (state.error) {
+          consoleEl.textContent = `Error: ${formatPythonBrowserValue(state.error)}\n`
+        }
+      })
+
+      startButton.addEventListener('click', () => void host.start(sourceEditor.value))
+      void host.start(sourceEditor.value)
+    </script>
+  </body>
+</html>

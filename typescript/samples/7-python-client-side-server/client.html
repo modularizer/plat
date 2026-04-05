@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>plat Browser Python Client</title>
+    <style>
+      body {
+        margin: 0;
+        font-family: "Avenir Next", "Segoe UI", sans-serif;
+        background: #eef3ef;
+        color: #192223;
+      }
+      .shell {
+        max-width: 980px;
+        margin: 0 auto;
+        padding: 20px;
+        display: grid;
+        gap: 16px;
+      }
+      .panel {
+        background: rgba(255, 255, 255, 0.88);
+        border: 1px solid #cfddd5;
+        border-radius: 18px;
+        padding: 16px;
+      }
+      h1, h2, p { margin: 0; }
+      .meta { color: #5a706d; }
+      .row {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+      input, textarea, button {
+        font: inherit;
+      }
+      input, textarea {
+        width: 100%;
+        border-radius: 14px;
+        border: 1px solid #cfddd5;
+        background: white;
+        color: #192223;
+        padding: 12px;
+      }
+      textarea {
+        min-height: 120px;
+        resize: vertical;
+        font-family: "JetBrains Mono", "Fira Code", monospace;
+        font-size: 13px;
+        line-height: 1.65;
+      }
+      button {
+        border: 0;
+        border-radius: 999px;
+        padding: 10px 14px;
+        background: #24695b;
+        color: white;
+        font-weight: 700;
+        cursor: pointer;
+      }
+      pre {
+        margin: 0;
+        padding: 12px;
+        border-radius: 14px;
+        background: #162022;
+        color: #d4ece5;
+        white-space: pre-wrap;
+        font-family: "JetBrains Mono", "Fira Code", monospace;
+        font-size: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <div class="panel">
+        <h1>plat Browser Python Client</h1>
+        <p class="meta">Connect to a browser-hosted Python server by name and call it like a normal plat client.</p>
+      </div>
+
+      <div class="panel">
+        <h2>Connect</h2>
+        <div class="row" style="margin-top:12px;">
+          <input id="serverUrlInput" value="css://browser-python-math" />
+          <button id="connectButton">Connect</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Call</h2>
+        <div class="row" style="margin-top:12px;">
+          <textarea id="callInput">await client.add({ a: 20, b: 22 })</textarea>
+          <button id="runButton">Run</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Result</h2>
+        <pre id="resultEl"></pre>
+      </div>
+    </div>
+
+    <script type="importmap">
+      {
+        "imports": {
+          "mqtt": "https://esm.sh/mqtt@5?bundle"
+        }
+      }
+    </script>
+    <script type="module">
+      import {
+        createPythonClientSideClientRunner,
+        formatPythonBrowserValue,
+      } from '../../dist/python-browser-entry.js'
+
+      const serverUrlInput = document.getElementById('serverUrlInput')
+      const connectButton = document.getElementById('connectButton')
+      const callInput = document.getElementById('callInput')
+      const runButton = document.getElementById('runButton')
+      const resultEl = document.getElementById('resultEl')
+      const runner = createPythonClientSideClientRunner()
+
+      runner.subscribe((state) => {
+        resultEl.textContent = formatPythonBrowserValue(state.error ?? state.result ?? '')
+      })
+
+      connectButton.addEventListener('click', () => {
+        void runner.connect(serverUrlInput.value.trim())
+      })
+
+      runButton.addEventListener('click', () => {
+        void runner.runAgainst(serverUrlInput.value.trim(), callInput.value)
+      })
+
+      void runner.connect(serverUrlInput.value.trim())
+    </script>
+  </body>
+</html>

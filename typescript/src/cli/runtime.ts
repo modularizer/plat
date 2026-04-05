@@ -6,6 +6,7 @@
  */
 
 import { OpenAPIClient, type OpenAPIClientConfig } from '../client/openapi-client'
+import { createClientSideServerMQTTWebRTCTransportPlugin } from '../client-side-server/mqtt-webrtc'
 
 // ── types ──────────────────────────────────────────────────
 
@@ -262,6 +263,16 @@ export async function runCli(spec: any, argvOrOptions?: string[] | RunCliOptions
     ?? 'http://localhost:3000'
 
   const token = process.env.API_TOKEN
+  const clientConfig: Partial<OpenAPIClientConfig> = {
+    ...options?.clientConfig,
+  }
+
+  if (
+    baseUrl.startsWith('css://')
+    && !clientConfig.transportPlugins?.length
+  ) {
+    clientConfig.transportPlugins = [createClientSideServerMQTTWebRTCTransportPlugin()]
+  }
 
   const client = new OpenAPIClient(spec, {
     baseUrl,
@@ -269,7 +280,7 @@ export async function runCli(spec: any, argvOrOptions?: string[] | RunCliOptions
       ...options?.headers,
       ...(token ? { authorization: `Bearer ${token}` } : {}),
     },
-    ...options?.clientConfig,
+    ...clientConfig,
   })
 
   const { input, format } = parseArgs(rest)

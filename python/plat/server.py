@@ -50,6 +50,7 @@ from .protocol_plugin import ServerHostContext, ServerTransportRuntime
 from .server_types import ControllerMeta, FileQueueOptions, RouteContext, RouteMeta, PLATServerOptions
 from .tools import format_tool
 from .transports import CallEnvelope, ResolvedOperation
+from .authority_server import create_authority_server_controller
 
 RESERVED_METHOD_NAMES = {"tools", "routes", "endpoints", "help", "openapi"}
 logger = get_logger("plat.server")
@@ -177,6 +178,7 @@ class PLATServer:
         fastapi = _lazy_fastapi()
         self._fastapi = fastapi
         self.options = self._coerce_options(options)
+        self.logger = self.options.logger or logger
         self.routes: list[dict[str, str]] = []
         self.tools: dict[str, dict[str, str]] = {}
         self.rpc_operations_by_id: dict[str, dict[str, Any]] = {}
@@ -203,6 +205,8 @@ class PLATServer:
 
         if controller_classes:
             self.register(*controller_classes)
+        if self.options.authority_server and self.options.authority_server is not True:
+            self.register(create_authority_server_controller(self.options.authority_server))
 
     def _coerce_options(self, options: PLATServerOptions | dict[str, Any] | None) -> PLATServerOptions:
         if options is None:
@@ -255,6 +259,13 @@ class PLATServer:
                 for key, value in headers.items():
                     response.headers.setdefault(key, value)
                 return response
+
+        for middleware in self.options.middlewares:
+            self.use(middleware)
+
+    def use(self, middleware: Any) -> "PLATServer":
+        self.app.middleware("http")(middleware)
+        return self
 
     def _setup_documentation_routes(self) -> None:
         JSONResponse = self._fastapi["JSONResponse"]
@@ -587,7 +598,25 @@ class PLATServer:
                 plugin.attach(transport_runtime, host_context)
             plugin.start(transport_runtime)
         self._print_startup_message(final_host, final_port)
-        self._fastapi["uvicorn"].run(self.app, host=final_host, port=final_port)
+        if self.options.on_start is not None:
+            maybe = self.options.on_start({
+                "protocol": self.options.protocol,
+                "host": final_host,
+                "port": final_port,
+            })
+            if inspect.isawaitable(maybe):
+                asyncio.run(maybe)
+        try:
+            self._fastapi["uvicorn"].run(self.app, host=final_host, port=final_port)
+        finally:
+            if self.options.on_stop is not None:
+                maybe = self.options.on_stop({
+                    "protocol": self.options.protocol,
+                    "host": final_host,
+                    "port": final_port,
+                })
+                if inspect.isawaitable(maybe):
+                    asyncio.run(maybe)
         return self
 
     def _process_file_queue_once(self) -> None:
@@ -608,7 +637,7 @@ class PLATServer:
 
     def create_transport_runtime(self) -> ServerTransportRuntime:
         return ServerTransportRuntime(
-            logger=logger,
+            logger=self.logger,
             resolve_operation=self._resolve_operation,
             dispatch=self._dispatch_transport_call,
             normalize_input=lambda input_data: normalize_parameters(
@@ -702,6 +731,10 @@ class PLATServer:
             wants_deferred = not help_requested and self._is_deferred_execution_requested(request)
 
             try:
+                if self.options.on_request is not None:
+                    maybe = self.options.on_request(request, response, full_path, request.method)
+                    if inspect.isawaitable(maybe):
+                        await maybe
                 calls_controller = self.options.calls.get("controller") if self.options.calls else None
                 calls_path = self.options.calls.get("path") if self.options.calls else None
                 if wants_deferred and calls_controller is not None and isinstance(calls_path, str):
@@ -817,10 +850,18 @@ class PLATServer:
                     ),
                 )
                 if execution["kind"] == "help":
+                    if self.options.on_response is not None:
+                        maybe = self.options.on_response(request, response, 200, execution["result"])
+                        if inspect.isawaitable(maybe):
+                            await maybe
                     return execution["result"]
                 if execution["kind"] == "http_response":
                     http_response = execution["http_response"]
                     self._apply_response_headers(response, ctx)
+                    if self.options.on_response is not None:
+                        maybe = self.options.on_response(request, response, execution["status_code"], http_response.body)
+                        if inspect.isawaitable(maybe):
+                            await maybe
                     headers = dict(http_response.headers)
                     for key, value in response.headers.items():
                         headers.setdefault(key, value)
@@ -829,10 +870,26 @@ class PLATServer:
                 result = execution["result"]
                 status_code = execution["status_code"]
                 self._apply_response_headers(response, ctx)
+                if self.options.on_response is not None:
+                    maybe = self.options.on_response(request, response, status_code, result)
+                    if inspect.isawaitable(maybe):
+                        await maybe
                 return result
             except HTTPException:
                 raise
             except Exception as exc:
+                status_code = getattr(exc, "status_code", None) or getattr(exc, "status", None) or 500
+                self.logger.error("plat Python request failed: %s", str(exc))
+                if self.options.on_error is not None:
+                    maybe = self.options.on_error(request, response, exc, status_code)
+                    if inspect.isawaitable(maybe):
+                        await maybe
+                if self.options.handle_error is not None:
+                    handled = self.options.handle_error(request, response, exc)
+                    if inspect.isawaitable(handled):
+                        handled = await handled
+                    if handled:
+                        return response
                 raise self._to_http_exception(exc) from exc
 
         endpoint.__annotations__ = {
@@ -1334,13 +1391,13 @@ class PLATServer:
 
     def _print_startup_message(self, host: str, port: int) -> None:
         url = f"{self.options.protocol}://{host}:{port}"
-        logger.info("plat Python server running at %s", url)
+        self.logger.info("plat Python server running at %s", url)
         if self.options.calls and isinstance(self.options.calls.get("path"), str):
-            logger.info("  calls  %s%sStatus?id=...", url, self.options.calls["path"])
+            self.logger.info("  calls  %s%sStatus?id=...", url, self.options.calls["path"])
         if self.options.file_queue and self.options.file_queue is not False:
-            logger.info("  queue  %s -> %s", self.options.file_queue.inbox, self.options.file_queue.outbox)
+            self.logger.info("  queue  %s -> %s", self.options.file_queue.inbox, self.options.file_queue.outbox)
         for route in self.routes:
-            logger.info("  %s %s", route["method"].ljust(6), route["path"])
+            self.logger.info("  %s %s", route["method"].ljust(6), route["path"])
 
     def _get_rate_limit_meta(self, route_meta: RouteMeta, controller_meta: ControllerMeta):
         route_value = (route_meta.opts or {}).get("rateLimit")

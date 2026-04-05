@@ -60,6 +60,8 @@ def create_http_transport_plugin(
             return mode == "http" or mode == "auto"
 
         def connect(self, request: TransportRequest) -> _HTTPConnection:
+            if request_fn is not None:
+                return _HTTPConnection(client=None)
             httpx = _httpx()
             client = httpx.Client(
                 base_url=config.base_url,

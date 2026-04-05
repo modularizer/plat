@@ -2,7 +2,37 @@ import * as mqttModule from 'mqtt'
 import type { IClientOptions, MqttClient } from 'mqtt'
 import { createClientSideServerTransportPlugin } from '../client/css-transport-plugin'
 import type { OpenAPIClientTransportPlugin } from '../client/transport-plugin'
-import { createRTCDataChannelAdapter } from './channel'
+import { createRTCDataChannelAdapter, type ClientSideServerChannel } from './channel'
+import {
+  buildClientSideServerIdentityChallenge,
+  clientSideServerPublicKeysEqual,
+  type ClientSideServerAuthorityServer,
+  type ClientSideServerExportedKeyPair,
+  type ClientSideServerPublicIdentity,
+  type ClientSideServerSignedAuthorityRecord,
+  type ClientSideServerStorageLike,
+  type ClientSideServerTrustedServerRecord,
+  getOrCreateClientSideServerIdentityKeyPair,
+  loadTrustedClientSideServerRecordFromMap,
+  resolveTrustedClientSideServerFromAuthorities,
+  loadTrustedClientSideServerRecord,
+  trustClientSideServerFromAuthorityRecord,
+  saveTrustedClientSideServerRecordToMap,
+  signClientSideServerChallenge,
+  toClientSideServerPublicIdentity,
+  trustClientSideServerOnFirstUse,
+  verifyClientSideServerChallenge,
+  verifySignedClientSideServerAuthorityRecord,
+} from './identity'
+import {
+  isClientSideServerPeerMessage,
+  type ClientSideServerMessage,
+  type ClientSideServerPeerMessage,
+} from './protocol'
+import {
+  parseClientSideServerAddress,
+  type ClientSideServerAddress,
+} from './signaling'
 import type { PLATClientSideServer } from './server'
 
 export const DEFAULT_CLIENT_SIDE_SERVER_MQTT_BROKER = 'wss://broker.emqx.io:8084/mqtt'
@@ -24,6 +54,10 @@ interface ClientSideServerSignalingMessageBase {
   connectionId?: string
   description?: RTCSessionDescriptionInit
   candidate?: RTCIceCandidateInit
+  identity?: ClientSideServerPublicIdentity
+  authorityRecord?: ClientSideServerSignedAuthorityRecord
+  challengeNonce?: string
+  challengeSignature?: string
   at: number
 }
 
@@ -37,12 +71,49 @@ export interface ClientSideServerMQTTWebRTCOptions {
   connectionTimeoutMs?: number
   announceIntervalMs?: number
   clientIdPrefix?: string
+  identity?: ClientSideServerIdentityOptions
 }
 
 export interface ClientSideServerMQTTWebRTCServerOptions extends ClientSideServerMQTTWebRTCOptions {
   serverName: string
   server: PLATClientSideServer
 }
+
+export interface ClientSideServerIdentityOptions {
+  keyPair?: ClientSideServerExportedKeyPair
+  storage?: ClientSideServerStorageLike
+  keyPairStorageKey?: string
+  knownHosts?: Record<string, ClientSideServerTrustedServerRecord>
+  knownHostsStorage?: ClientSideServerStorageLike
+  knownHostsStorageKey?: string
+  trustOnFirstUse?: boolean
+  authority?: {
+    publicKeyJwk: JsonWebKey
+    authorityName?: string
+  }
+  authorityServers?: ClientSideServerAuthorityServer[]
+  authorityResolver?: (serverName: string) => Promise<ClientSideServerTrustedServerRecord | null>
+  authorityRecord?: ClientSideServerSignedAuthorityRecord
+}
+
+export interface ClientSideServerPeerSession extends ClientSideServerChannel {
+  readonly address: ClientSideServerAddress
+  readonly connectionId: string
+  readonly peerId: string
+  readonly connectedAt: number
+  isOpen(): boolean
+  sendPeer(event: string, data?: unknown): Promise<void>
+  subscribePeer(listener: (message: ClientSideServerPeerMessage) => void | Promise<void>): () => void
+}
+
+export interface ClientSideServerPeerPool {
+  connect(address: string | ClientSideServerAddress): Promise<ClientSideServerPeerSession>
+  close(address: string | ClientSideServerAddress): Promise<void>
+  closeAll(): Promise<void>
+}
+
+let defaultPeerPool: ClientSideServerPeerPool | undefined
+let defaultTransportPlugin: OpenAPIClientTransportPlugin | undefined
 
 export class ClientSideServerMQTTWebRTCServer {
   private mqtt?: MqttClient
@@ -51,6 +122,8 @@ export class ClientSideServerMQTTWebRTCServer {
   private readonly peers = new Map<string, RTCPeerConnection>()
   private readonly pendingCandidates = new Map<string, RTCIceCandidateInit[]>()
   private announceTimer?: ReturnType<typeof setInterval>
+  private identityKeyPair?: ClientSideServerExportedKeyPair
+  private publicIdentity?: ClientSideServerPublicIdentity
 
   constructor(private options: ClientSideServerMQTTWebRTCServerOptions) {
     this.serverInstanceId = `${options.serverName}:${randomId('server')}`
@@ -63,6 +136,7 @@ export class ClientSideServerMQTTWebRTCServer {
   async start(): Promise<void> {
     if (this.mqtt) return
 
+    await this.ensureIdentity()
     this.mqtt = await connectToBroker(this.options)
     this.mqtt.on('message', (_topic, payload) => {
       void this.onMessage(payload)
@@ -105,6 +179,8 @@ export class ClientSideServerMQTTWebRTCServer {
       kind: 'announce',
       senderId: this.serverInstanceId,
       serverName: this.options.serverName,
+      identity: this.publicIdentity,
+      authorityRecord: this.options.identity?.authorityRecord,
       at: Date.now(),
     })
   }
@@ -138,6 +214,7 @@ export class ClientSideServerMQTTWebRTCServer {
 
   private async acceptOffer(message: ClientSideServerSignalingMessage): Promise<void> {
     if (!this.mqtt || !message.connectionId || !message.description) return
+    await this.ensureIdentity()
 
     const peer = new RTCPeerConnection({
       iceServers: this.options.iceServers ?? DEFAULT_CLIENT_SIDE_SERVER_ICE_SERVERS,
@@ -191,114 +268,374 @@ export class ClientSideServerMQTTWebRTCServer {
       serverName: this.options.serverName,
       connectionId: message.connectionId,
       description: answer,
+      identity: this.publicIdentity,
+      authorityRecord: this.options.identity?.authorityRecord,
+      challengeNonce: message.challengeNonce,
+      challengeSignature: message.challengeNonce
+        ? await signClientSideServerChallenge(
+          this.identityKeyPair!,
+          buildClientSideServerIdentityChallenge({
+            serverName: this.options.serverName,
+            connectionId: message.connectionId,
+            challengeNonce: message.challengeNonce,
+          }),
+        )
+        : undefined,
       at: Date.now(),
     })
+  }
+
+  private async ensureIdentity(): Promise<void> {
+    if (this.identityKeyPair && this.publicIdentity) return
+    const storageKey = this.options.identity?.keyPairStorageKey ?? `plat-css:keypair:${this.options.serverName}`
+    this.identityKeyPair = this.options.identity?.keyPair
+      ?? await getOrCreateClientSideServerIdentityKeyPair({
+        storage: this.options.identity?.storage,
+        storageKey,
+      })
+    this.publicIdentity = await toClientSideServerPublicIdentity(this.identityKeyPair)
   }
 }
 
 export function createClientSideServerMQTTWebRTCTransportPlugin(
   options: ClientSideServerMQTTWebRTCOptions = {},
 ): OpenAPIClientTransportPlugin {
+  if (isDefaultMQTTWebRTCOptions(options)) {
+    defaultTransportPlugin ??= createClientSideServerMQTTWebRTCTransportPluginInternal(options)
+    return defaultTransportPlugin
+  }
+  return createClientSideServerMQTTWebRTCTransportPluginInternal(options)
+}
+
+function createClientSideServerMQTTWebRTCTransportPluginInternal(
+  options: ClientSideServerMQTTWebRTCOptions,
+): OpenAPIClientTransportPlugin {
+  const pool = createClientSideServerMQTTWebRTCPeerPool(options)
   return createClientSideServerTransportPlugin({
     connect: async ({ address }) => {
-      const mqtt = await connectToBroker(options)
-      const topic = options.mqttTopic ?? DEFAULT_CLIENT_SIDE_SERVER_MQTT_TOPIC
-      const clientInstanceId = `${options.clientIdPrefix ?? 'client'}:${randomId('peer')}`
-      const connectionId = randomId('conn')
-      const peer = new RTCPeerConnection({
-        iceServers: options.iceServers ?? DEFAULT_CLIENT_SIDE_SERVER_ICE_SERVERS,
-      })
-      const dataChannel = peer.createDataChannel(`plat-css:${connectionId}`)
-
-      const ready = deferred<void>()
-      const timeoutMs = options.connectionTimeoutMs ?? 15_000
-      const cleanupCallbacks: Array<() => void> = []
-      const pendingCandidates: RTCIceCandidateInit[] = []
-
-      await subscribe(mqtt, topic)
-
-      const onMessage = async (_topic: string, payload: Buffer) => {
-        const message = parseSignalingMessage(payload)
-        if (!message || message.senderId === clientInstanceId || message.targetId !== clientInstanceId || message.connectionId !== connectionId) {
-          return
-        }
-
-        if (message.kind === 'answer' && message.description) {
-          await peer.setRemoteDescription(new RTCSessionDescription(message.description))
-          for (const candidate of pendingCandidates.splice(0, pendingCandidates.length)) {
-            await peer.addIceCandidate(new RTCIceCandidate(candidate))
-          }
-          return
-        }
-
-        if (message.kind === 'ice' && message.candidate) {
-          if (peer.remoteDescription) {
-            await peer.addIceCandidate(new RTCIceCandidate(message.candidate))
-          } else {
-            pendingCandidates.push(message.candidate)
-          }
-        }
-      }
-
-      mqtt.on('message', onMessage)
-      cleanupCallbacks.push(() => mqtt.off('message', onMessage))
-
-      peer.onicecandidate = (event) => {
-        if (!event.candidate) return
-        void publish(mqtt, topic, {
-          protocol: 'plat-css-v1',
-          kind: 'ice',
-          senderId: clientInstanceId,
-          targetId: address.serverName,
-          connectionId,
-          candidate: event.candidate.toJSON(),
-          at: Date.now(),
-        })
-      }
-
-      peer.onconnectionstatechange = () => {
-        if (peer.connectionState === 'failed') {
-          ready.reject(new Error(`WebRTC connection to ${address.serverName} failed`))
-        }
-      }
-
-      dataChannel.addEventListener('open', () => ready.resolve(), { once: true })
-      dataChannel.addEventListener('error', () => ready.reject(new Error(`Data channel to ${address.serverName} failed`)), { once: true })
-
-      const offer = await peer.createOffer()
-      await peer.setLocalDescription(offer)
-      await publish(mqtt, topic, {
-        protocol: 'plat-css-v1',
-        kind: 'offer',
-        senderId: clientInstanceId,
-        targetId: address.serverName,
-        serverName: address.serverName,
-        connectionId,
-        description: offer,
-        at: Date.now(),
-      })
-
-      const timer = setTimeout(() => {
-        ready.reject(new Error(`Timed out connecting to client-side server ${address.serverName}`))
-      }, timeoutMs)
-      cleanupCallbacks.push(() => clearTimeout(timer))
-
-      await ready.promise
-
-      const adapter = createRTCDataChannelAdapter(dataChannel)
-      const originalClose = adapter.close?.bind(adapter)
-
+      const session = await pool.connect(address)
       return {
-        ...adapter,
-        async close() {
-          for (const cleanup of cleanupCallbacks) cleanup()
-          peer.close()
-          await originalClose?.()
-          await endClient(mqtt)
-        },
+        send: (message) => session.send(message),
+        subscribe: (listener) => session.subscribe(listener),
+        close: () => undefined,
       }
     },
   })
+}
+
+export function createClientSideServerMQTTWebRTCPeerPool(
+  options: ClientSideServerMQTTWebRTCOptions = {},
+): ClientSideServerPeerPool {
+  if (isDefaultMQTTWebRTCOptions(options)) {
+    defaultPeerPool ??= createClientSideServerMQTTWebRTCPeerPoolInternal(options)
+    return defaultPeerPool
+  }
+  return createClientSideServerMQTTWebRTCPeerPoolInternal(options)
+}
+
+function createClientSideServerMQTTWebRTCPeerPoolInternal(
+  options: ClientSideServerMQTTWebRTCOptions,
+): ClientSideServerPeerPool {
+  const sessions = new Map<string, Promise<ClientSideServerPeerSession>>()
+
+  const normalizeAddress = (input: string | ClientSideServerAddress) =>
+    typeof input === 'string' ? parseClientSideServerAddress(input) : input
+
+  const connect = async (input: string | ClientSideServerAddress): Promise<ClientSideServerPeerSession> => {
+    const address = normalizeAddress(input)
+    const existing = sessions.get(address.href)
+    if (existing) {
+      const session = await existing
+      if (session.isOpen()) return session
+      sessions.delete(address.href)
+    }
+
+    const created = createClientSideServerMQTTWebRTCPeerSession(address, options)
+    sessions.set(address.href, created)
+    try {
+      return await created
+    } catch (error) {
+      sessions.delete(address.href)
+      throw error
+    }
+  }
+
+  return {
+    connect,
+    async close(input) {
+      const address = normalizeAddress(input)
+      const existing = sessions.get(address.href)
+      if (!existing) return
+      sessions.delete(address.href)
+      const session = await existing
+      await session.close?.()
+    },
+    async closeAll() {
+      const pending = Array.from(sessions.values())
+      sessions.clear()
+      for (const sessionPromise of pending) {
+        const session = await sessionPromise
+        await session.close?.()
+      }
+    },
+  }
+}
+
+async function createClientSideServerMQTTWebRTCPeerSession(
+  address: ClientSideServerAddress,
+  options: ClientSideServerMQTTWebRTCOptions,
+): Promise<ClientSideServerPeerSession> {
+  const webrtc = await resolveClientWebRTCImplementation()
+  const mqtt = await connectToBroker(options)
+  const topic = options.mqttTopic ?? DEFAULT_CLIENT_SIDE_SERVER_MQTT_TOPIC
+  const peerId = `${options.clientIdPrefix ?? 'client'}:${randomId('peer')}`
+  const connectionId = randomId('conn')
+  const challengeNonce = randomId('challenge')
+  const peer = new webrtc.RTCPeerConnection({
+    iceServers: options.iceServers ?? DEFAULT_CLIENT_SIDE_SERVER_ICE_SERVERS,
+  })
+  const dataChannel = peer.createDataChannel(`plat-css:${connectionId}`)
+
+  const ready = deferred<void>()
+  const timeoutMs = options.connectionTimeoutMs ?? (typeof RTCPeerConnection !== 'undefined' ? 15_000 : 30_000)
+  const cleanupCallbacks: Array<() => void> = []
+  const pendingCandidates: RTCIceCandidateInit[] = []
+  const expectedIdentity = await resolveExpectedServerIdentity(address.serverName, options.identity)
+  let open = true
+
+  await subscribe(mqtt, topic)
+
+  const onMessage = async (_topic: string, payload: Buffer) => {
+    const message = parseSignalingMessage(payload)
+    if (!message || message.senderId === peerId || message.targetId !== peerId || message.connectionId !== connectionId) {
+      return
+    }
+
+    if (message.kind === 'answer' && message.description) {
+      await verifyServerIdentityForAnswer({
+        serverName: address.serverName,
+        connectionId,
+        challengeNonce,
+        message,
+        optionsIdentity: options.identity,
+        expectedIdentity,
+      })
+      await peer.setRemoteDescription(webrtc.createSessionDescription(message.description))
+      if (!expectedIdentity && message.authorityRecord && options.identity?.authority?.publicKeyJwk) {
+        const trusted = await trustClientSideServerFromAuthorityRecord(
+          message.authorityRecord,
+          options.identity.authority.publicKeyJwk,
+          {
+            storage: options.identity?.knownHostsStorage,
+            storageKey: options.identity?.knownHostsStorageKey,
+          },
+        )
+        if (options.identity?.knownHosts) {
+          saveTrustedClientSideServerRecordToMap(options.identity.knownHosts, trusted)
+        }
+      } else if (!expectedIdentity && options.identity?.trustOnFirstUse !== false && message.identity) {
+        const trusted = await trustClientSideServerOnFirstUse(
+          address.serverName,
+          message.identity,
+          {
+            storage: options.identity?.knownHostsStorage,
+            storageKey: options.identity?.knownHostsStorageKey,
+          },
+        )
+        if (options.identity?.knownHosts) {
+          saveTrustedClientSideServerRecordToMap(options.identity.knownHosts, trusted)
+        }
+      }
+      for (const candidate of pendingCandidates.splice(0, pendingCandidates.length)) {
+        await peer.addIceCandidate(webrtc.createIceCandidate(candidate))
+      }
+      return
+    }
+
+    if (message.kind === 'ice' && message.candidate) {
+      if (peer.remoteDescription) {
+        await peer.addIceCandidate(webrtc.createIceCandidate(message.candidate))
+      } else {
+        pendingCandidates.push(message.candidate)
+      }
+    }
+  }
+
+  mqtt.on('message', onMessage)
+  cleanupCallbacks.push(() => mqtt.off('message', onMessage))
+
+  peer.onicecandidate = (event: any) => {
+    if (!event.candidate) return
+    void publish(mqtt, topic, {
+      protocol: 'plat-css-v1',
+      kind: 'ice',
+      senderId: peerId,
+      targetId: address.serverName,
+      connectionId,
+      candidate: webrtc.serializeIceCandidate(event.candidate),
+      at: Date.now(),
+    })
+  }
+
+  peer.onconnectionstatechange = () => {
+    if (peer.connectionState === 'failed') {
+      ready.reject(new Error(`WebRTC connection to ${address.serverName} failed`))
+    }
+    if (peer.connectionState === 'failed' || peer.connectionState === 'closed' || peer.connectionState === 'disconnected') {
+      open = false
+    }
+  }
+
+  dataChannel.addEventListener('open', () => ready.resolve(), { once: true })
+  dataChannel.addEventListener('error', () => ready.reject(new Error(`Data channel to ${address.serverName} failed`)), { once: true })
+  dataChannel.addEventListener(
+    'close',
+    () => {
+      open = false
+      ready.reject(new Error(`Data channel to ${address.serverName} closed before becoming ready`))
+    },
+    { once: true },
+  )
+
+  const offer = await peer.createOffer()
+  await peer.setLocalDescription(offer)
+  await publish(mqtt, topic, {
+    protocol: 'plat-css-v1',
+    kind: 'offer',
+    senderId: peerId,
+    targetId: address.serverName,
+    serverName: address.serverName,
+    connectionId,
+    description: offer,
+    challengeNonce,
+    at: Date.now(),
+  })
+
+  const timer = setTimeout(() => {
+    ready.reject(new Error(`Timed out connecting to client-side server ${address.serverName}`))
+  }, timeoutMs)
+  cleanupCallbacks.push(() => clearTimeout(timer))
+
+  await ready.promise
+
+  const channel = createRTCDataChannelAdapter(dataChannel as RTCDataChannel)
+  const originalClose = channel.close?.bind(channel)
+
+  return {
+    ...channel,
+    address,
+    connectionId,
+    peerId,
+    connectedAt: Date.now(),
+    isOpen: () => open && dataChannel.readyState === 'open',
+    async sendPeer(event, data) {
+      await channel.send({
+        platcss: 'peer',
+        event,
+        data,
+        fromPeerId: peerId,
+        fromServerName: address.serverName,
+      })
+    },
+    subscribePeer(listener) {
+      return channel.subscribe(async (message) => {
+        if (isClientSideServerPeerMessage(message)) {
+          await listener(message)
+        }
+      })
+    },
+    async close() {
+      if (!open) return
+      open = false
+      for (const cleanup of cleanupCallbacks) cleanup()
+      await originalClose?.()
+      await peer.close()
+      await endClient(mqtt)
+    },
+  }
+}
+
+async function resolveExpectedServerIdentity(
+  serverName: string,
+  options?: ClientSideServerIdentityOptions,
+): Promise<ClientSideServerTrustedServerRecord | null> {
+  const mapped = loadTrustedClientSideServerRecordFromMap(options?.knownHosts, serverName)
+  if (mapped) return mapped
+
+  if (options?.authorityServers?.length) {
+    const trusted = await resolveTrustedClientSideServerFromAuthorities(
+      serverName,
+      options.authorityServers,
+      {
+        storage: options?.knownHostsStorage,
+        storageKey: options?.knownHostsStorageKey,
+      },
+    )
+    if (trusted) {
+      if (options.knownHosts) {
+        saveTrustedClientSideServerRecordToMap(options.knownHosts, trusted)
+      }
+      return trusted
+    }
+  }
+
+  const authorityResolved = options?.authorityResolver ? await options.authorityResolver(serverName) : null
+  if (authorityResolved) return authorityResolved
+  const stored = loadTrustedClientSideServerRecord(serverName, {
+    storage: options?.knownHostsStorage,
+    storageKey: options?.knownHostsStorageKey,
+  })
+  if (stored && options?.knownHosts) {
+    saveTrustedClientSideServerRecordToMap(options.knownHosts, stored)
+  }
+  return stored
+}
+
+async function verifyServerIdentityForAnswer(input: {
+  serverName: string
+  connectionId: string
+  challengeNonce: string
+  message: ClientSideServerSignalingMessage
+  optionsIdentity?: ClientSideServerIdentityOptions
+  expectedIdentity: ClientSideServerTrustedServerRecord | null
+}): Promise<void> {
+  const { message, serverName, connectionId, challengeNonce, expectedIdentity } = input
+  if (!message.identity || !message.challengeSignature) {
+    if (expectedIdentity) {
+      throw new Error(`Server ${serverName} did not provide identity proof`)
+    }
+    return
+  }
+
+  if (message.authorityRecord && input.optionsIdentity?.authority?.publicKeyJwk) {
+    const authorityOk = await verifySignedClientSideServerAuthorityRecord(
+      message.authorityRecord,
+      input.optionsIdentity.authority.publicKeyJwk,
+    )
+    if (!authorityOk) {
+      throw new Error(`Server ${serverName} provided an invalid authority record`)
+    }
+    if (!clientSideServerPublicKeysEqual(message.authorityRecord.publicKeyJwk, message.identity.publicKeyJwk)) {
+      throw new Error(`Server ${serverName} authority record does not match presented identity`)
+    }
+  }
+
+  const verified = await verifyClientSideServerChallenge(
+    message.identity.publicKeyJwk,
+    buildClientSideServerIdentityChallenge({
+      serverName,
+      connectionId,
+      challengeNonce,
+    }),
+    message.challengeSignature,
+  )
+  if (!verified) {
+    throw new Error(`Server ${serverName} failed identity challenge verification`)
+  }
+
+  if (expectedIdentity && !clientSideServerPublicKeysEqual(expectedIdentity.publicKeyJwk, message.identity.publicKeyJwk)) {
+    throw new Error(`Server ${serverName} presented an unexpected public key`)
+  }
 }
 
 export function createClientSideServerMQTTWebRTCServer(
@@ -388,6 +725,10 @@ function randomId(prefix: string): string {
   return `${prefix}-${Math.random().toString(36).slice(2)}`
 }
 
+function isDefaultMQTTWebRTCOptions(options: ClientSideServerMQTTWebRTCOptions): boolean {
+  return Object.keys(options).length === 0
+}
+
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void
   let reject!: (reason?: unknown) => void
@@ -396,4 +737,40 @@ function deferred<T>() {
     reject = rej
   })
   return { promise, resolve, reject }
+}
+
+interface ClientWebRTCImplementation {
+  RTCPeerConnection: new (config: { iceServers: RTCIceServer[] }) => any
+  createSessionDescription(description: RTCSessionDescriptionInit): RTCSessionDescriptionInit
+  createIceCandidate(candidate: RTCIceCandidateInit): RTCIceCandidateInit
+  serializeIceCandidate(candidate: any): RTCIceCandidateInit
+}
+
+async function resolveClientWebRTCImplementation(): Promise<ClientWebRTCImplementation> {
+  if (typeof RTCPeerConnection !== 'undefined') {
+    return {
+      RTCPeerConnection,
+      createSessionDescription: (description) => new RTCSessionDescription(description),
+      createIceCandidate: (candidate) => new RTCIceCandidate(candidate),
+      serializeIceCandidate: (candidate) => candidate.toJSON(),
+    }
+  }
+
+  try {
+    const wrtcModule = await import('@roamhq/wrtc')
+    const wrtc = (wrtcModule as any).default ?? wrtcModule
+    if (typeof wrtc?.RTCPeerConnection === 'function') {
+      return {
+        RTCPeerConnection: wrtc.RTCPeerConnection,
+        createSessionDescription: (description) => new wrtc.RTCSessionDescription(description),
+        createIceCandidate: (candidate) => new wrtc.RTCIceCandidate(candidate),
+        serializeIceCandidate: (candidate) => candidate.toJSON(),
+      }
+    }
+  } catch (error) {
+    throw new Error(
+      `Node css:// support requires @roamhq/wrtc to be available: ${error instanceof Error ? error.message : String(error)}`,
+    )
+  }
+  throw new Error('Node css:// support requires @roamhq/wrtc to expose RTCPeerConnection')
 }

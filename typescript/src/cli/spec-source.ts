@@ -1,6 +1,8 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { parse as parseYaml } from 'yaml'
+import { fetchClientSideServerOpenAPI } from '../client-side-server/bootstrap'
+import { createClientSideServerMQTTWebRTCTransportPlugin } from '../client-side-server/mqtt-webrtc'
 
 export function getArgValue(args: string[], flag: string): string | undefined {
   for (let i = 0; i < args.length; i++) {
@@ -65,6 +67,10 @@ export function isUrl(value: string): boolean {
   return /^https?:\/\//i.test(value)
 }
 
+export function isClientSideServerUrl(value: string): boolean {
+  return /^css:\/\//i.test(value)
+}
+
 export function looksLikeHost(value: string): boolean {
   return value.includes('.')
     && !value.includes(path.sep)
@@ -113,6 +119,18 @@ export async function loadSpecSource(src?: string, cwd = process.cwd()): Promise
 
   const normalizedSrc = await normalizeSpecInput(src, cwd)
 
+  if (isClientSideServerUrl(normalizedSrc)) {
+    const spec = await fetchClientSideServerOpenAPI(
+      normalizedSrc,
+      createClientSideServerMQTTWebRTCTransportPlugin(),
+    )
+    return {
+      spec,
+      source: normalizedSrc,
+      baseUrl: normalizedSrc,
+    }
+  }
+
   if (isUrl(normalizedSrc)) {
     let lastError: Error | null = null
     for (const candidate of buildUrlCandidates(normalizedSrc)) {
@@ -141,6 +159,7 @@ export async function loadSpecSource(src?: string, cwd = process.cwd()): Promise
 }
 
 async function normalizeSpecInput(src: string, cwd: string): Promise<string> {
+  if (isClientSideServerUrl(src)) return src
   if (isUrl(src)) return src
 
   const resolved = path.resolve(cwd, src)
