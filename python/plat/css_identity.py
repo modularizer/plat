@@ -225,10 +225,9 @@ def verify_signature(public_key_jwk: dict[str, Any], message: str, signature: st
 
 
 def create_public_key_fingerprint(public_key_jwk: dict[str, Any]) -> str:
-    hashes, _ = _crypto()
-    digest = hashes.Hash(hashes.SHA256())
-    digest.update(_stable_json(public_key_jwk).encode("utf-8"))
-    return _b64url_encode(digest.finalize())
+    import hashlib
+    digest = hashlib.sha256(_stable_json(public_key_jwk).encode("utf-8")).digest()
+    return _b64url_encode(digest)
 
 
 def sign_message(private_key_jwk: dict[str, Any], message: str) -> str:

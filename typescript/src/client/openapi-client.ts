@@ -985,10 +985,11 @@ class OpenAPIClientImpl<TSpec extends OpenAPISpec = OpenAPISpec, THeaders extend
     join: (...parts: string[]) => string
   }> {
     if (!this.nodeFileRuntimePromise) {
+      const dynamicImport = new Function('m', 'return import(m)') as (m: string) => Promise<any>
       this.nodeFileRuntimePromise = Promise.all([
-        import('node:fs/promises'),
-        import('node:path'),
-      ]).then(([fs, path]) => ({
+        dynamicImport('node:fs/promises'),
+        dynamicImport('node:path'),
+      ]).then(([fs, path]: [any, any]) => ({
         mkdir: async (targetPath: string) => { await fs.mkdir(targetPath, { recursive: true }) },
         writeFile: async (targetPath: string, content: string) => { await fs.writeFile(targetPath, content) },
         readFile: async (targetPath: string) => await fs.readFile(targetPath, 'utf8'),

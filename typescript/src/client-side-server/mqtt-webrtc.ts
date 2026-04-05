@@ -757,7 +757,8 @@ async function resolveClientWebRTCImplementation(): Promise<ClientWebRTCImplemen
   }
 
   try {
-    const wrtcModule = await import('@roamhq/wrtc')
+    const dynamicImport = new Function('m', 'return import(m)') as (m: string) => Promise<any>
+    const wrtcModule = await dynamicImport('@roamhq/wrtc')
     const wrtc = (wrtcModule as any).default ?? wrtcModule
     if (typeof wrtc?.RTCPeerConnection === 'function') {
       return {

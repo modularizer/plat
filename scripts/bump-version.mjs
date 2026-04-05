@@ -11,6 +11,7 @@ const semverPattern = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-.
 export const VERSION_FILES = [
   'typescript/package.json',
   'typescript/package-lock.json',
+  'typescript_client/package.json',
   'python/pyproject.toml',
   'typescript/src/server/server.ts',
   'typescript/src/client-side-server/server.ts',
@@ -69,6 +70,10 @@ export function bumpVersion(nextVersion) {
   updateText('typescript/src/client-side-server/server.ts', (source) => {
     assertPattern(source, /version: '[^']+'/m, 'typescript/src/client-side-server/server.ts')
     return source.replace(/version: '[^']+'/m, `version: '${nextVersion}'`)
+  }, touchedFiles)
+
+  updateJson('typescript_client/package.json', (data) => {
+    data.version = nextVersion
   }, touchedFiles)
 
   return touchedFiles

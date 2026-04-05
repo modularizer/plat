@@ -1,0 +1,51 @@
+{
+  "name": "@modularizer/plat-client",
+  "version": "0.3.0",
+  "description": "Browser-safe client for Protocol and Language Agnostic Tooling",
+  "type": "module",
+  "author": {
+    "name": "Torin Halsted",
+    "email": "modularizer@gmail.com",
+    "url": "https://github.com/modularizer"
+  },
+  "license": "Unlicense",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/modularizer/plat.git"
+  },
+  "bugs": {
+    "url": "https://github.com/modularizer/plat/issues"
+  },
+  "homepage": "https://github.com/modularizer/plat",
+  "sideEffects": false,
+  "main": "./dist/client-entry.js",
+  "types": "./dist/client-entry.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/client-entry.js",
+      "types": "./dist/client-entry.d.ts"
+    },
+    "./client-server": {
+      "import": "./dist/client-server-entry.js",
+      "types": "./dist/client-server-entry.d.ts"
+    },
+    "./python-browser": {
+      "import": "./dist/python-browser-entry.js",
+      "types": "./dist/python-browser-entry.d.ts"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "cd ../typescript && tsx scripts/gen-python-browser-sources.ts && cd ../typescript_client && tsc && tsx ../typescript/scripts/rewrite-relative-imports.ts"
+  },
+  "dependencies": {
+    "mqtt": "^5.15.1",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.7.0",
+    "typescript": "^5.4.0"
+  }
+}

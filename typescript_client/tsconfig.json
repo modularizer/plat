@@ -1,0 +1,61 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+
+    "rootDir": "../typescript/src",
+    "outDir": "./dist",
+
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": false,
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+
+    "skipLibCheck": true,
+
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+
+    "resolveJsonModule": true,
+    "isolatedModules": true
+  },
+
+  "include": [
+    "../typescript/src/client-entry.ts",
+    "../typescript/src/client-server-entry.ts",
+    "../typescript/src/python-browser-entry.ts",
+    "../typescript/src/logging.ts",
+    "../typescript/src/rpc.ts",
+    "../typescript/src/client/**/*",
+    "../typescript/src/client-side-server/**/*",
+    "../typescript/src/client-side-python/**/*",
+    "../typescript/src/types/**/*",
+    "../typescript/src/spec/**/*",
+    "../typescript/src/shared/**/*",
+    "../typescript/src/args/**/*",
+    "../typescript/src/generated/**/*",
+    "../typescript/src/server/core.ts",
+    "../typescript/src/server/operation-registry.ts",
+    "../typescript/src/server/param-aliases.ts",
+    "../typescript/src/server/transports.ts",
+    "../typescript/src/server/routing.ts",
+    "../typescript/src/server/tools.ts",
+    "../typescript/src/server/authority-server.ts",
+    "../typescript/src/server/cache/**/*",
+    "../typescript/src/server/rate-limit/**/*",
+    "../typescript/src/server/token-limit/**/*"
+  ],
+
+  "exclude": [
+    "node_modules",
+    "dist",
+    "../typescript/src/**/*.spec.ts"
+  ]
+}
