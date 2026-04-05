@@ -1,5 +1,4 @@
-import * as mqttModule from 'mqtt'
-import type { IClientOptions, MqttClient } from 'mqtt'
+import mqtt, { type IClientOptions, type MqttClient } from 'mqtt'
 import { createClientSideServerTransportPlugin } from '../client/css-transport-plugin'
 import type { OpenAPIClientTransportPlugin } from '../client/transport-plugin'
 import { createRTCDataChannelAdapter, type ClientSideServerChannel } from './channel'
@@ -669,15 +668,10 @@ async function connectToBroker(options: ClientSideServerMQTTWebRTCOptions): Prom
 }
 
 function resolveMqttConnect(): (brokerUrl: string, options?: IClientOptions) => MqttClient {
-  const defaultExport = (mqttModule as any).default
-  const connect = (mqttModule as any).connect
-    ?? defaultExport?.connect
-    ?? defaultExport
-
+  const connect = mqtt.connect ?? (mqtt as any).default?.connect
   if (typeof connect !== 'function') {
     throw new Error('The loaded mqtt module does not expose a connect function')
   }
-
   return connect as (brokerUrl: string, options?: IClientOptions) => MqttClient
 }
 
