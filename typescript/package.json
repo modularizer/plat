@@ -1,6 +1,6 @@
 {
   "name": "@modularizer/plat",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Protocol and Language Agnostic Tooling Yielding Universal Semantics",
   "type": "module",
   "author": {
