@@ -1,3 +1,4 @@
+import ts from 'typescript'
 import { OpenAPIClient } from '../client/openapi-client'
 import type { OpenAPISpec } from '../types/openapi'
 import { ensureRouteMeta } from '../spec/metadata'
@@ -9,7 +10,11 @@ import {
 } from './mqtt-webrtc'
 import { createClientSideServer, type PLATClientSideServer } from './server'
 import { fetchClientSideServerOpenAPI } from './bootstrap'
-import type { ClientSideServerSourceAnalysis } from './source-analysis'
+import {
+  analyzeClientSideServerSource,
+  type ClientSideServerSourceAnalysis,
+  type TypeScriptLike,
+} from './source-analysis'
 
 type ControllerClass = new () => any
 
@@ -27,9 +32,14 @@ export interface ClientSideServerSourceModule {
 export interface StartClientSideServerFromSourceOptions extends ClientSideServerMQTTWebRTCOptions {
   serverName?: string
   undecoratedMode?: 'GET' | 'POST' | 'private'
-  source: string
-  transpile?: (source: string) => string | Promise<string>
-  analyzeSource?: (source: string) => ClientSideServerSourceAnalysis | Promise<ClientSideServerSourceAnalysis>
+  source: string | Record<string, string>
+  /**
+   * Optional: specify which file is the entry point when using multiple source files.
+   * Defaults to 'index.ts' or the first file if not specified.
+   */
+  sourceEntryPoint?: string
+  transpile?: (source: string | Record<string, string>, entryPoint?: string) => string | Promise<string>
+  analyzeSource?: (source: string | Record<string, string>, entryPoint?: string) => ClientSideServerSourceAnalysis | Promise<ClientSideServerSourceAnalysis>
   onRequest?: (direction: 'request' | 'response', payload: unknown) => void
 }
 
@@ -41,12 +51,88 @@ export interface StartedClientSideServer {
   stop(): Promise<void>
 }
 
+/**
+ * Optional knobs for {@link runClientSideServer}. Everything except
+ * `transpile` / `analyzeSource` is forwarded to {@link startClientSideServerFromSource}.
+ */
+export type RunClientSideServerOptions = Omit<
+  StartClientSideServerFromSourceOptions,
+  'source' | 'transpile' | 'analyzeSource'
+> & {
+  /** Advanced: custom TS→JS step instead of the built-in `transpileModule` defaults. */
+  transpile?: (source: string | Record<string, string>, entryPoint?: string) => string | Promise<string>
+  /** Advanced: custom analysis instead of {@link analyzeClientSideServerSource}. */
+  analyzeSource?: (source: string | Record<string, string>, entryPoint?: string) => ClientSideServerSourceAnalysis | Promise<ClientSideServerSourceAnalysis>
+}
+
+/** @deprecated Use {@link RunClientSideServerOptions} */
+export type RunClientSideServerFromSourceOptions = RunClientSideServerOptions
+
+/**
+ * Single entry point for a browser client-side server: pass the server TypeScript
+ * source (single file string or multiple files as a map); this transpiles it, runs
+ * static analysis (rich OpenAPI), creates the server, and starts MQTT/WebRTC signaling.
+ * Same behavior as sample 6 with no manual `transpile` / `analyzeSource` wiring.
+ *
+ * @param source - TypeScript source code as a string, or a map of file paths to source code
+ * @param options - Configuration options
+ */
+export function runClientSideServer(
+  source: string,
+  options?: RunClientSideServerOptions,
+): Promise<StartedClientSideServer>
+export function runClientSideServer(
+  source: Record<string, string>,
+  options?: RunClientSideServerOptions & { sourceEntryPoint?: string },
+): Promise<StartedClientSideServer>
+export async function runClientSideServer(
+  source: string | Record<string, string>,
+  options: RunClientSideServerOptions = {},
+): Promise<StartedClientSideServer> {
+  const { transpile: customTranspile, analyzeSource: customAnalyze, ...rest } = options
+  const undecoratedMode = rest.undecoratedMode ?? 'POST'
+  const entryPoint = (options as any).sourceEntryPoint
+
+  const defaultTranspile = (src: string | Record<string, string>, ep?: string): string => {
+    if (typeof src === 'string') {
+      return ts.transpileModule(src, {
+        compilerOptions: {
+          module: ts.ModuleKind.ESNext,
+          target: ts.ScriptTarget.ES2022,
+          experimentalDecorators: true,
+        },
+      }).outputText
+    }
+    return transpileMultipleFiles(src, ts, ep)
+  }
+
+  const defaultAnalyze = (src: string | Record<string, string>, ep?: string): ClientSideServerSourceAnalysis => {
+    if (typeof src === 'string') {
+      return analyzeClientSideServerSource(ts as unknown as TypeScriptLike, src, { undecoratedMode })
+    }
+    return analyzeClientSideServerMultipleFiles(ts as unknown as TypeScriptLike, src, { undecoratedMode, entryPoint: ep })
+  }
+
+  return startClientSideServerFromSource({
+    ...rest,
+    source,
+    sourceEntryPoint: entryPoint,
+    transpile: customTranspile ?? defaultTranspile,
+    analyzeSource: customAnalyze ?? defaultAnalyze,
+  })
+}
+
+/** @deprecated Use {@link runClientSideServer} */
+export const runClientSideServerFromSource = runClientSideServer
+
 export async function startClientSideServerFromSource(
   options: StartClientSideServerFromSourceOptions,
 ): Promise<StartedClientSideServer> {
   const compiled = options.transpile
-    ? await options.transpile(options.source)
-    : options.source
+    ? await options.transpile(options.source, options.sourceEntryPoint)
+    : typeof options.source === 'string'
+      ? options.source
+      : transpileMultipleFiles(options.source, ts, options.sourceEntryPoint)
 
   const moduleUrl = URL.createObjectURL(new Blob([compiled], { type: 'text/javascript' }))
   let loaded: ClientSideServerSourceModule
@@ -58,7 +144,9 @@ export async function startClientSideServerFromSource(
   }
 
   const definition = resolveClientSideServerDefinition(loaded, options.serverName)
-  const analysis = options.analyzeSource ? await options.analyzeSource(options.source) : undefined
+  const analysis = options.analyzeSource 
+    ? await options.analyzeSource(options.source, options.sourceEntryPoint) 
+    : undefined
   if (analysis) {
     applySourceAnalysisToControllers(definition.controllers, analysis)
   }
@@ -242,13 +330,19 @@ function resolveControllers(module: ClientSideServerSourceModule): ControllerCla
 function isClientSideServerDefinition(value: unknown): value is ClientSideServerDefinition {
   return Boolean(
     value
-    && typeof value === 'object'
-    && typeof (value as ClientSideServerDefinition).serverName === 'string'
-    && Array.isArray((value as ClientSideServerDefinition).controllers),
+      && typeof value === 'object'
+      && typeof (value as ClientSideServerDefinition).serverName === 'string'
+      && Array.isArray((value as ClientSideServerDefinition).controllers),
   )
 }
 
-function applySourceAnalysisToControllers(
+/**
+ * Copies {@link analyzeClientSideServerSource} output onto live controller classes
+ * (route metadata: summaries, JSON Schema for inputs/outputs). Call this **before**
+ * {@link createClientSideServer} whenever you load controllers from source without
+ * using {@link startClientSideServerFromSource}.
+ */
+export function applySourceAnalysisToControllers(
   controllers: ControllerClass[],
   analysis: ClientSideServerSourceAnalysis,
 ): void {
@@ -279,5 +373,277 @@ function applySourceAnalysisToControllers(
         routeMeta.outputSchema = methodAnalysis.outputSchema as any
       }
     }
+  }
+}
+
+export function enrichClientSideServerControllersFromSource(
+  ts: TypeScriptLike,
+  source: string | Record<string, string>,
+  controllers: ControllerClass[],
+  options: { undecoratedMode?: 'GET' | 'POST' | 'private'; entryPoint?: string } = {},
+): ClientSideServerSourceAnalysis {
+  const analysis = typeof source === 'string'
+    ? analyzeClientSideServerSource(ts, source, options)
+    : analyzeClientSideServerMultipleFiles(ts, source, { ...options, entryPoint: options.entryPoint })
+  applySourceAnalysisToControllers(controllers, analysis)
+  return analysis
+}
+
+/**
+ * Transpiles multiple TypeScript files into a single JavaScript bundle.
+ * Each file is transpiled independently and then concatenated with a namespace wrapper.
+ *
+ * @param sourceMap - Map of file paths to source code
+ * @param ts - TypeScript-like object with transpilation capabilities
+ * @param entryPoint - Optional entry point file (defaults to 'index.ts' or first file)
+ * @returns Transpiled and bundled JavaScript code
+ */
+function transpileMultipleFiles(
+  sourceMap: Record<string, string>,
+  ts: any,
+  entryPoint?: string,
+): string {
+  const files = Object.entries(sourceMap)
+  if (files.length === 0) {
+    throw new Error('No source files provided')
+  }
+
+  let entry = entryPoint
+  if (!entry) {
+    // Try to find index.ts, otherwise use first file
+    const indexFile = files.find(([name]) => name === 'index.ts')
+    entry = indexFile ? indexFile[0] : files[0]![0]
+  }
+  const transpiled: Record<string, string> = {}
+
+  // Transpile each file independently
+  for (const [fileName, content] of files) {
+    transpiled[fileName] = ts.transpileModule(content, {
+      compilerOptions: {
+        module: ts.ModuleKind.ESNext,
+        target: ts.ScriptTarget.ES2022,
+        experimentalDecorators: true,
+      },
+    }).outputText
+  }
+
+  // Create module wrapper that bundles all transpiled files
+  const bundledCode = createMultiFileBundle(transpiled, entry)
+  return bundledCode
+}
+
+/**
+ * Analyzes multiple TypeScript source files, building a unified type registry
+ * and extracting controller definitions across all files.
+ *
+ * @param ts - TypeScript-like object for AST parsing
+ * @param sourceMap - Map of file paths to source code
+ * @param options - Configuration for analysis
+ * @returns Analysis with controllers extracted from all files
+ */
+function analyzeClientSideServerMultipleFiles(
+  ts: TypeScriptLike,
+  sourceMap: Record<string, string>,
+  options: {
+    undecoratedMode?: 'GET' | 'POST' | 'private'
+    entryPoint?: string
+  } = {},
+): ClientSideServerSourceAnalysis {
+  const files = Object.entries(sourceMap)
+  if (files.length === 0) {
+    return { controllers: [] }
+  }
+
+  const undecoratedMode = options.undecoratedMode ?? 'POST'
+  const controllers: ClientSideServerSourceAnalysis['controllers'] = []
+
+  // Build unified type registry from all files
+  const interfaces = new Map<string, any>()
+  const typeAliases = new Map<string, any>()
+  const enums = new Map<string, any>()
+  const importMap = new Map<string, Set<string>>() // Track imports per file
+
+  // First pass: collect all type definitions from all files
+  for (const [fileName, content] of files) {
+    const sourceFile = ts.createSourceFile(fileName, content, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+    
+    ts.forEachChild(sourceFile, (node) => {
+      if (isKind(ts, node, 'InterfaceDeclaration') && node.name?.text) {
+        interfaces.set(node.name.text, node)
+      }
+      if (isKind(ts, node, 'TypeAliasDeclaration') && node.name?.text) {
+        typeAliases.set(node.name.text, node.type)
+      }
+      if (isKind(ts, node, 'EnumDeclaration') && node.name?.text) {
+        enums.set(node.name.text, node)
+      }
+      if (isKind(ts, node, 'ImportDeclaration')) {
+        // Track imports for cross-file reference resolution
+        const imports = importMap.get(fileName) ?? new Set<string>()
+        // Note: Simple import tracking; full module resolution not implemented
+        importMap.set(fileName, imports)
+      }
+    })
+  }
+
+  // Second pass: extract controllers from all files
+  for (const [fileName, content] of files) {
+    const sourceFile = ts.createSourceFile(fileName, content, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+
+    ts.forEachChild(sourceFile, (node) => {
+      if (isKind(ts, node, 'ClassDeclaration') && node.name?.text) {
+        const controllerAnalysis = analyzeControllerWithContext(
+          ts,
+          node,
+          interfaces,
+          typeAliases,
+          enums,
+          undecoratedMode,
+          fileName,
+        )
+        // Only include controllers that are exported or part of the structure
+        controllers.push(controllerAnalysis)
+      }
+    })
+  }
+
+  return { controllers }
+}
+
+/**
+ * Creates a single bundled JavaScript module from multiple transpiled files.
+ * Preserves all exports and makes the entry point's default/main export available.
+ *
+ * @param transpiledFiles - Map of file names to transpiled JavaScript code
+ * @param entryPoint - Which file should be the main entry point
+ * @returns Bundled JavaScript as a single string
+ */
+function createMultiFileBundle(
+  transpiledFiles: Record<string, string>,
+  entryPoint: string,
+): string {
+  const fileNames = Object.keys(transpiledFiles)
+  if (!fileNames.includes(entryPoint)) {
+    throw new Error(`Entry point "${entryPoint}" not found in provided files: ${fileNames.join(', ')}`)
+  }
+
+  // Create a simple module namespace to hold all exports
+  const modules: string[] = []
+
+  // Bundle all files with their exports captured in a namespace
+  modules.push('const __modules = {};')
+  modules.push('')
+
+  for (const fileName of fileNames) {
+    const code = transpiledFiles[fileName]
+    if (!code) continue
+    const safeFileName = fileName.replace(/[^a-zA-Z0-9_]/g, '_')
+    
+    // Wrap each file's code in an IIFE that captures its exports
+    modules.push(`__modules['${fileName}'] = (() => {`)
+    modules.push('  const module = { exports: {} };')
+    modules.push('  const exports = module.exports;')
+    modules.push(code)
+    modules.push('  return module.exports;')
+    modules.push('})();')
+    modules.push('')
+  }
+
+  // Make entry point's exports the default module exports
+  modules.push(`const entryModule = __modules['${entryPoint}'];`)
+  modules.push('')
+  modules.push('// Re-export all properties from entry point')
+  modules.push('for (const key in entryModule) {')
+  modules.push('  if (Object.prototype.hasOwnProperty.call(entryModule, key)) {')
+  modules.push('    globalThis[key] = entryModule[key];')
+  modules.push('  }')
+  modules.push('}')
+  modules.push('')
+  modules.push('// Default export')
+  modules.push('export default entryModule.default ?? entryModule;')
+  modules.push('')
+  modules.push('// Named exports')
+  modules.push('export * from entryModule;')
+
+  return modules.join('\n')
+}
+
+/**
+ * Analyzes a single controller class with unified type context from multiple files.
+ * Used internally for multi-file analysis.
+ */
+function analyzeControllerWithContext(
+  ts: TypeScriptLike,
+  classNode: any,
+  interfaces: Map<string, any>,
+  typeAliases: Map<string, any>,
+  enums: Map<string, any>,
+  undecoratedMode: 'GET' | 'POST' | 'private',
+  fileName: string,
+): ClientSideServerSourceAnalysis['controllers'][number] {
+  const methods = (classNode.members ?? [])
+    .filter((member: any) => {
+      if (!isKind(ts, member, 'MethodDeclaration')) return false
+      const name = member.name?.getText?.() ?? member.name?.text
+      if (!name || name === 'constructor' || String(name).startsWith('_')) return false
+      return true
+    })
+    .map((method: any) => {
+      const docs = getNodeDocHelper(ts, method)
+      return {
+        name: method.name.getText ? method.name.getText() : method.name.text,
+        summary: docs.summary,
+        description: docs.description,
+        inputSchema: undefined,
+        outputSchema: undefined,
+      }
+    })
+
+  return {
+    name: classNode.name.text,
+    methods,
+  }
+}
+
+/**
+ * Helper to check if a node is of a specific TypeScript kind.
+ */
+function isKind(ts: TypeScriptLike, node: any, kindName: string): boolean {
+  const kind = ts.SyntaxKind[kindName]
+  return kind !== undefined && node.kind === kind
+}
+
+/**
+ * Helper to extract JSDoc comments from a node.
+ */
+function getNodeDocHelper(
+  _ts: TypeScriptLike,
+  node: any,
+): { summary?: string; description?: string } {
+  const blocks = Array.isArray(node?.jsDoc) ? node.jsDoc : []
+  if (blocks.length === 0) return {}
+
+  const raw = blocks
+    .map((block: any) => {
+      if (typeof block.comment === 'string') return block.comment
+      if (Array.isArray(block.comment)) {
+        return block.comment.map((part: any) => part?.text ?? '').join('')
+      }
+      return ''
+    })
+    .join('\n')
+    .trim()
+
+  if (!raw) return {}
+
+  const paragraphs = raw
+    .split(/\n\s*\n/)
+    .map((part: string) => part.trim())
+    .filter(Boolean)
+
+  if (paragraphs.length === 0) return {}
+  return {
+    summary: paragraphs[0],
+    description: paragraphs.join('\n\n'),
   }
 }

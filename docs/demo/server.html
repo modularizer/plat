@@ -344,12 +344,10 @@ export default serveClientSideServer('browser-math', [BrowserMathApi])
 
     <script type="module">
       import {
-        analyzeClientSideServerSource,
-        startClientSideServerFromSource,
+        runClientSideServer,
         startRetryLoop,
         DEFAULT_CLIENT_SIDE_SERVER_MQTT_BROKER,
       } from '@modularizer/plat/client-server'
-      import ts from 'typescript'
 
       const editor = document.getElementById('codeEditor')
       const consoleEl = document.getElementById('consoleLog')
@@ -412,12 +410,7 @@ export default serveClientSideServer('browser-math', [BrowserMathApi])
         clearPanel(requestEl)
 
         try {
-          activeRuntime = await startClientSideServerFromSource({
-            source: editor.value,
-            transpile: transpileSource,
-            analyzeSource(source) {
-              return analyzeClientSideServerSource(ts, source)
-            },
+          activeRuntime = await runClientSideServer(editor.value, {
             onRequest(direction, payload) {
               requestEl.textContent += `${direction === 'request' ? 'REQ' : 'RES'}  ${JSON.stringify(payload)}\n`
               requestEl.scrollTop = requestEl.scrollHeight
@@ -463,16 +456,6 @@ export default serveClientSideServer('browser-math', [BrowserMathApi])
           flashEditorMeta('Save failed', 'error')
           console.error(error)
         }
-      }
-
-      function transpileSource(source) {
-        return ts.transpileModule(source, {
-          compilerOptions: {
-            module: ts.ModuleKind.ESNext,
-            target: ts.ScriptTarget.ES2022,
-            experimentalDecorators: true,
-          },
-        }).outputText
       }
 
       function formatValue(value) {
