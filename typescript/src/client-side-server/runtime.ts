@@ -125,14 +125,39 @@ export async function runClientSideServer(
 /** @deprecated Use {@link runClientSideServer} */
 export const runClientSideServerFromSource = runClientSideServer
 
+function transpileSource(source: string | Record<string, string>, entryPoint?: string): string {
+  if (typeof source === 'string') {
+    return ts.transpileModule(source, {
+      compilerOptions: {
+        module: ts.ModuleKind.ESNext,
+        target: ts.ScriptTarget.ES2022,
+        experimentalDecorators: true,
+      },
+    }).outputText
+  } else {
+    return transpileMultipleFiles(source, ts, entryPoint)
+  }
+}
+
 export async function startClientSideServerFromSource(
   options: StartClientSideServerFromSourceOptions,
 ): Promise<StartedClientSideServer> {
-  const compiled = options.transpile
-    ? await options.transpile(options.source, options.sourceEntryPoint)
-    : typeof options.source === 'string'
-      ? options.source
-      : transpileMultipleFiles(options.source, ts, options.sourceEntryPoint)
+  const compiled = await (options.transpile
+    ? options.transpile(options.source, options.sourceEntryPoint)
+    : Promise.resolve(transpileSource(options.source, options.sourceEntryPoint)))
+
+  const analysis = await (options.analyzeSource
+    ? options.analyzeSource(options.source, options.sourceEntryPoint)
+    : Promise.resolve(
+        typeof options.source === 'string'
+          ? analyzeClientSideServerSource(ts as unknown as TypeScriptLike, options.source, {
+              undecoratedMode: options.undecoratedMode ?? 'POST',
+            })
+          : analyzeClientSideServerMultipleFiles(ts as unknown as TypeScriptLike, options.source, {
+              undecoratedMode: options.undecoratedMode ?? 'POST',
+              entryPoint: options.sourceEntryPoint,
+            }),
+      ))
 
   const moduleUrl = URL.createObjectURL(new Blob([compiled], { type: 'text/javascript' }))
   let loaded: ClientSideServerSourceModule
@@ -144,9 +169,6 @@ export async function startClientSideServerFromSource(
   }
 
   const definition = resolveClientSideServerDefinition(loaded, options.serverName)
-  const analysis = options.analyzeSource 
-    ? await options.analyzeSource(options.source, options.sourceEntryPoint) 
-    : undefined
   if (analysis) {
     applySourceAnalysisToControllers(definition.controllers, analysis)
   }
@@ -199,6 +221,7 @@ export function serveClientSideServer(
 ): ClientSideServerDefinition {
   return { serverName, controllers }
 }
+
 
 export interface ConnectClientSideServerOptions extends ClientSideServerMQTTWebRTCOptions {
   baseUrl: string
@@ -418,13 +441,14 @@ function transpileMultipleFiles(
 
   // Transpile each file independently
   for (const [fileName, content] of files) {
-    transpiled[fileName] = ts.transpileModule(content, {
+    const output = ts.transpileModule(content, {
       compilerOptions: {
         module: ts.ModuleKind.ESNext,
         target: ts.ScriptTarget.ES2022,
         experimentalDecorators: true,
       },
     }).outputText
+    transpiled[fileName] = output
   }
 
   // Create module wrapper that bundles all transpiled files
@@ -501,7 +525,6 @@ function analyzeClientSideServerMultipleFiles(
           undecoratedMode,
           fileName,
         )
-        // Only include controllers that are exported or part of the structure
         controllers.push(controllerAnalysis)
       }
     })
@@ -511,41 +534,25 @@ function analyzeClientSideServerMultipleFiles(
 }
 
 /**
- * Creates a single bundled JavaScript module from multiple transpiled files.
- * Preserves all exports and makes the entry point's default/main export available.
- *
- * @param transpiledFiles - Map of file names to transpiled JavaScript code
- * @param entryPoint - Which file should be the main entry point
- * @returns Bundled JavaScript as a single string
+ * Creates a multi-file bundle by wrapping each file in a namespace object
+ * and re-exporting from the entry point.
  */
 function createMultiFileBundle(
-  transpiledFiles: Record<string, string>,
+  transpiled: Record<string, string>,
   entryPoint: string,
 ): string {
-  const fileNames = Object.keys(transpiledFiles)
-  if (!fileNames.includes(entryPoint)) {
-    throw new Error(`Entry point "${entryPoint}" not found in provided files: ${fileNames.join(', ')}`)
-  }
-
-  // Create a simple module namespace to hold all exports
   const modules: string[] = []
 
-  // Bundle all files with their exports captured in a namespace
+  // Create namespace object containing all modules
   modules.push('const __modules = {};')
   modules.push('')
 
-  for (const fileName of fileNames) {
-    const code = transpiledFiles[fileName]
-    if (!code) continue
-    const safeFileName = fileName.replace(/[^a-zA-Z0-9_]/g, '_')
-    
-    // Wrap each file's code in an IIFE that captures its exports
-    modules.push(`__modules['${fileName}'] = (() => {`)
-    modules.push('  const module = { exports: {} };')
-    modules.push('  const exports = module.exports;')
+  // Add each transpiled file as a module in the namespace
+  for (const [fileName, code] of Object.entries(transpiled)) {
+    modules.push(`__modules['${fileName}'] = {};`)
+    modules.push('(function(module) {')
     modules.push(code)
-    modules.push('  return module.exports;')
-    modules.push('})();')
+    modules.push(`}(__modules['${fileName}']));`)
     modules.push('')
   }
 
