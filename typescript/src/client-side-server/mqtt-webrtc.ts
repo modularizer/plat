@@ -27,6 +27,8 @@ import {
   isClientSideServerPeerMessage,
   type ClientSideServerMessage,
   type ClientSideServerPeerMessage,
+  type ClientSideServerPingMessage,
+  type ClientSideServerPrivateChallengeRequest,
 } from './protocol'
 import {
   parseClientSideServerAddress,
@@ -44,9 +46,22 @@ export const DEFAULT_CLIENT_SIDE_SERVER_ICE_SERVERS: RTCIceServer[] = [
   { urls: 'stun:stun4.l.google.com:19302' },
 ]
 
+export interface ClientSideServerWorkerInfo {
+  weight?: number
+  suggestedWorkerCount?: number
+  currentClients?: number
+  acceptingNewClients?: boolean
+  loadBalancing?: ClientSideServerLoadBalancingPreferences
+}
+
+export interface ClientSideServerLoadBalancingPreferences {
+  strategy?: 'weighted-random' | 'round-robin' | 'least-connections' | 'none'
+  maxClientsPerInstance?: number
+}
+
 interface ClientSideServerSignalingMessageBase {
   protocol: 'plat-css-v1'
-  kind: 'announce' | 'offer' | 'answer' | 'ice'
+  kind: 'announce' | 'offer' | 'answer' | 'ice' | 'discover'
   senderId: string
   targetId?: string
   serverName?: string
@@ -57,10 +72,61 @@ interface ClientSideServerSignalingMessageBase {
   authorityRecord?: ClientSideServerSignedAuthorityRecord
   challengeNonce?: string
   challengeSignature?: string
+  workerInfo?: ClientSideServerWorkerInfo
+  clientIdentity?: ClientSideServerPublicIdentity
   at: number
 }
 
 type ClientSideServerSignalingMessage = ClientSideServerSignalingMessageBase
+
+export interface ClientSideServerWorkerPoolOptions {
+  maxActiveWorkers?: number
+  maxStandbyWorkers?: number
+  maxTotalConnections?: number
+  rediscoveryThreshold?: number
+  discoveryTimeoutMs?: number
+  passiveDiscovery?: boolean
+  rankCandidates?: (candidates: ClientSideServerDiscoveryCandidate[]) => ClientSideServerDiscoveryCandidate[]
+  assignWeights?: (workers: ClientSideServerWorkerState[]) => void
+  routingStrategy?: 'weighted-random' | 'round-robin' | 'least-pending' | 'primary-with-fallback'
+  healthCheckIntervalMs?: number
+  healthCheckTimeoutMs?: number
+}
+
+export interface ClientSideServerDiscoveryCandidate {
+  instanceId: string
+  serverName: string
+  identity: ClientSideServerPublicIdentity
+  authorityRecord?: ClientSideServerSignedAuthorityRecord
+  mqttChallengeVerified: boolean
+  workerInfo: ClientSideServerWorkerInfo
+  discoveredAt: number
+  alreadyConnected: boolean
+}
+
+export interface ClientSideServerDiscoveryResult {
+  serverName: string
+  candidates: ClientSideServerDiscoveryCandidate[]
+  discoveredAt: number
+}
+
+export interface ClientSideServerWorkerState {
+  instanceId: string
+  session: ClientSideServerPeerSession
+  identity: ClientSideServerPublicIdentity
+  authorityRecord?: ClientSideServerSignedAuthorityRecord
+  status: 'connecting' | 'verifying' | 'active' | 'standby' | 'draining' | 'failed' | 'closed'
+  weight: number
+  serverAdvertisedWeight: number
+  authorityVerified: boolean
+  pendingRequests: number
+  totalRequests: number
+  totalErrors: number
+  connectedAt: number
+  lastRequestAt?: number
+  lastErrorAt?: number
+  lastPongAt?: number
+}
 
 export interface ClientSideServerMQTTWebRTCOptions {
   mqttBroker?: string
@@ -71,11 +137,14 @@ export interface ClientSideServerMQTTWebRTCOptions {
   announceIntervalMs?: number
   clientIdPrefix?: string
   identity?: ClientSideServerIdentityOptions
+  workerPool?: ClientSideServerWorkerPoolOptions
+  requirePrivateChallenge?: boolean
 }
 
 export interface ClientSideServerMQTTWebRTCServerOptions extends ClientSideServerMQTTWebRTCOptions {
   serverName: string
   server: PLATClientSideServer
+  workerInfo?: ClientSideServerWorkerInfo
 }
 
 export interface ClientSideServerIdentityOptions {
@@ -100,6 +169,7 @@ export interface ClientSideServerPeerSession extends ClientSideServerChannel {
   readonly connectionId: string
   readonly peerId: string
   readonly connectedAt: number
+  readonly identity?: ClientSideServerPublicIdentity
   isOpen(): boolean
   sendPeer(event: string, data?: unknown): Promise<void>
   subscribePeer(listener: (message: ClientSideServerPeerMessage) => void | Promise<void>): () => void
@@ -116,13 +186,15 @@ let defaultTransportPlugin: OpenAPIClientTransportPlugin | undefined
 
 export class ClientSideServerMQTTWebRTCServer {
   private mqtt?: MqttClient
-  private readonly serverInstanceId: string
+  readonly serverInstanceId: string
   private readonly unsubscribeByConnection = new Map<string, () => void>()
   private readonly peers = new Map<string, RTCPeerConnection>()
   private readonly pendingCandidates = new Map<string, RTCIceCandidateInit[]>()
+  private readonly channels = new Map<string, ClientSideServerChannel>()
   private announceTimer?: ReturnType<typeof setInterval>
   private identityKeyPair?: ClientSideServerExportedKeyPair
   private publicIdentity?: ClientSideServerPublicIdentity
+  private clientCount = 0
 
   constructor(private options: ClientSideServerMQTTWebRTCServerOptions) {
     this.serverInstanceId = `${options.serverName}:${randomId('server')}`
@@ -189,7 +261,17 @@ export class ClientSideServerMQTTWebRTCServer {
     if (!message || message.senderId === this.serverInstanceId) return
     if (message.targetId && message.targetId !== this.options.serverName && message.targetId !== this.serverInstanceId) return
 
-    if (message.kind === 'offer' && message.targetId === this.options.serverName && message.connectionId && message.description) {
+    if (message.kind === 'discover' && message.targetId === this.options.serverName && message.challengeNonce) {
+      await this.respondToDiscover(message)
+      return
+    }
+
+    if (
+      message.kind === 'offer'
+      && (message.targetId === this.options.serverName || message.targetId === this.serverInstanceId)
+      && message.connectionId
+      && message.description
+    ) {
       await this.acceptOffer(message)
       return
     }
@@ -208,6 +290,99 @@ export class ClientSideServerMQTTWebRTCServer {
         pending.push(message.candidate)
         this.pendingCandidates.set(message.connectionId, pending)
       }
+    }
+  }
+
+  private async respondToDiscover(message: ClientSideServerSignalingMessage): Promise<void> {
+    if (!this.mqtt || !message.challengeNonce) return
+    await this.ensureIdentity()
+
+    const challengeString = buildClientSideServerIdentityChallenge({
+      serverName: this.options.serverName,
+      connectionId: this.serverInstanceId,
+      challengeNonce: message.challengeNonce,
+    })
+    const challengeSignature = await signClientSideServerChallenge(this.identityKeyPair!, challengeString)
+
+    await publish(this.mqtt, this.options.mqttTopic ?? DEFAULT_CLIENT_SIDE_SERVER_MQTT_TOPIC, {
+      protocol: 'plat-css-v1',
+      kind: 'announce',
+      senderId: this.serverInstanceId,
+      serverName: this.options.serverName,
+      identity: this.publicIdentity,
+      authorityRecord: this.options.identity?.authorityRecord,
+      challengeNonce: message.challengeNonce,
+      challengeSignature,
+      workerInfo: this.buildWorkerInfo(),
+      at: Date.now(),
+    })
+  }
+
+  private buildWorkerInfo(): ClientSideServerWorkerInfo | undefined {
+    const base = this.options.workerInfo
+    return {
+      weight: base?.weight,
+      suggestedWorkerCount: base?.suggestedWorkerCount,
+      currentClients: this.clientCount,
+      acceptingNewClients: base?.acceptingNewClients,
+      loadBalancing: base?.loadBalancing,
+    }
+  }
+
+  private async handleControlMessage(
+    msg: ClientSideServerMessage,
+    channel: ClientSideServerChannel,
+    connectionId: string,
+  ): Promise<void> {
+    if (!('platcss' in msg)) return
+    const control = msg as any
+
+    if (control.platcss === 'ping') {
+      await channel.send({ platcss: 'pong', ts: (control as ClientSideServerPingMessage).ts } as any)
+      return
+    }
+
+    if (control.platcss === 'private-challenge') {
+      const req = control as ClientSideServerPrivateChallengeRequest
+      if (req.challengeNonce.includes('-mqtt')) {
+        return
+      }
+      await this.ensureIdentity()
+      const challengeString = buildClientSideServerIdentityChallenge({
+        serverName: this.options.serverName,
+        connectionId,
+        challengeNonce: req.challengeNonce,
+      })
+      const sig = await signClientSideServerChallenge(this.identityKeyPair!, challengeString)
+      await channel.send({
+        platcss: 'private-challenge-response',
+        challengeNonce: req.challengeNonce,
+        challengeSignature: sig,
+        identity: this.publicIdentity!,
+        authorityRecord: this.options.identity?.authorityRecord,
+      } as any)
+    }
+  }
+
+  async drain(): Promise<void> {
+    if (this.options.workerInfo) {
+      this.options.workerInfo.acceptingNewClients = false
+    }
+
+    if (this.mqtt) {
+      await publish(this.mqtt, this.options.mqttTopic ?? DEFAULT_CLIENT_SIDE_SERVER_MQTT_TOPIC, {
+        protocol: 'plat-css-v1',
+        kind: 'announce',
+        senderId: this.serverInstanceId,
+        serverName: this.options.serverName,
+        identity: this.publicIdentity,
+        workerInfo: { ...this.buildWorkerInfo(), acceptingNewClients: false },
+        at: Date.now(),
+      })
+    }
+
+    for (const channel of this.channels.values()) {
+      await channel.send({ platcss: 'drain' } as any)
     }
   }
 
@@ -243,12 +418,27 @@ export class ClientSideServerMQTTWebRTCServer {
     }
 
     peer.ondatachannel = (event) => {
-      const unsubscribe = this.options.server.serveChannel(createRTCDataChannelAdapter(event.channel))
-      this.unsubscribeByConnection.set(message.connectionId!, unsubscribe)
-      event.channel.addEventListener('close', () => {
-        unsubscribe()
-        this.unsubscribeByConnection.delete(message.connectionId!)
-      }, { once: true })
+      const channel = createRTCDataChannelAdapter(event.channel)
+      const connId = message.connectionId!
+
+      const controlUnsubscribe = channel.subscribe(async (msg) => {
+        await this.handleControlMessage(msg, channel, connId)
+      })
+
+      const serveUnsubscribe = this.options.server.serveChannel(channel)
+      this.channels.set(connId, channel)
+      this.clientCount++
+
+      const cleanup = () => {
+        controlUnsubscribe()
+        serveUnsubscribe()
+        this.channels.delete(connId)
+        this.clientCount--
+        this.unsubscribeByConnection.delete(connId)
+      }
+
+      this.unsubscribeByConnection.set(connId, cleanup)
+      event.channel.addEventListener('close', cleanup, { once: true })
     }
 
     await peer.setRemoteDescription(new RTCSessionDescription(message.description))
@@ -309,6 +499,30 @@ export function createClientSideServerMQTTWebRTCTransportPlugin(
 function createClientSideServerMQTTWebRTCTransportPluginInternal(
   options: ClientSideServerMQTTWebRTCOptions,
 ): OpenAPIClientTransportPlugin {
+  const useMultiWorker = options.workerPool
+    && ((options.workerPool.maxActiveWorkers ?? 1) > 1 || (options.workerPool.maxStandbyWorkers ?? 0) > 0)
+
+  if (useMultiWorker) {
+    let multiPoolPromise: Promise<import('./worker-pool').ClientSideServerMultiWorkerPool> | undefined
+    const getPool = () => {
+      multiPoolPromise ??= import('./worker-pool').then((mod) =>
+        mod.createClientSideServerMultiWorkerPool(options),
+      )
+      return multiPoolPromise
+    }
+    return createClientSideServerTransportPlugin({
+      connect: async ({ address }) => {
+        const pool = await getPool()
+        const session = await pool.connect(address)
+        return {
+          send: (message) => session.send(message),
+          subscribe: (listener) => session.subscribe(listener),
+          close: () => undefined,
+        }
+      },
+    })
+  }
+
   const pool = createClientSideServerMQTTWebRTCPeerPool(options)
   return createClientSideServerTransportPlugin({
     connect: async ({ address }) => {
@@ -380,9 +594,151 @@ function createClientSideServerMQTTWebRTCPeerPoolInternal(
   }
 }
 
-async function createClientSideServerMQTTWebRTCPeerSession(
+export async function discoverClientSideServers(
+  serverName: string,
+  options: ClientSideServerMQTTWebRTCOptions = {},
+): Promise<ClientSideServerDiscoveryResult> {
+  const mqttClient = await connectToBroker(options)
+  const topic = options.mqttTopic ?? DEFAULT_CLIENT_SIDE_SERVER_MQTT_TOPIC
+  const peerId = `${options.clientIdPrefix ?? 'client'}:${randomId('discover')}`
+  const challengeNonce = randomId('challenge') + '-mqtt'
+  const timeoutMs = options.workerPool?.discoveryTimeoutMs ?? 3000
+  const candidates: ClientSideServerDiscoveryCandidate[] = []
+
+  await subscribe(mqttClient, topic)
+
+  const onMessage = async (_topic: string, payload: Buffer) => {
+    const message = parseSignalingMessage(payload)
+    if (!message || message.senderId === peerId) return
+    if (message.kind !== 'announce') return
+    if (message.serverName !== serverName) return
+    if (message.challengeNonce && message.challengeNonce !== challengeNonce) return
+
+    let mqttChallengeVerified = false
+    if (message.challengeNonce === challengeNonce && message.challengeSignature && message.identity) {
+      const challengeString = buildClientSideServerIdentityChallenge({
+        serverName,
+        connectionId: message.senderId,
+        challengeNonce,
+      })
+      mqttChallengeVerified = await verifyClientSideServerChallenge(
+        message.identity.publicKeyJwk,
+        challengeString,
+        message.challengeSignature,
+      )
+    }
+
+    if (message.authorityRecord && options.identity?.authority?.publicKeyJwk) {
+      const authorityOk = await verifySignedClientSideServerAuthorityRecord(
+        message.authorityRecord,
+        options.identity.authority.publicKeyJwk,
+      )
+      if (!authorityOk) return
+    }
+
+    const existing = candidates.find((c) => c.instanceId === message.senderId)
+    if (existing) return
+
+    candidates.push({
+      instanceId: message.senderId,
+      serverName,
+      identity: message.identity!,
+      authorityRecord: message.authorityRecord,
+      mqttChallengeVerified,
+      workerInfo: {
+        weight: message.workerInfo?.weight ?? 3,
+        suggestedWorkerCount: message.workerInfo?.suggestedWorkerCount,
+        currentClients: message.workerInfo?.currentClients ?? 0,
+        acceptingNewClients: message.workerInfo?.acceptingNewClients ?? true,
+        loadBalancing: message.workerInfo?.loadBalancing,
+      },
+      discoveredAt: Date.now(),
+      alreadyConnected: false,
+    })
+  }
+
+  mqttClient.on('message', onMessage)
+
+  await publish(mqttClient, topic, {
+    protocol: 'plat-css-v1',
+    kind: 'discover',
+    senderId: peerId,
+    targetId: serverName,
+    challengeNonce,
+    at: Date.now(),
+  })
+
+  await new Promise<void>((resolve) => setTimeout(resolve, timeoutMs))
+
+  mqttClient.off('message', onMessage)
+  await endClient(mqttClient)
+
+  return {
+    serverName,
+    candidates: defaultRankCandidates(candidates, options),
+    discoveredAt: Date.now(),
+  }
+}
+
+function defaultRankCandidates(
+  candidates: ClientSideServerDiscoveryCandidate[],
+  options: ClientSideServerMQTTWebRTCOptions,
+): ClientSideServerDiscoveryCandidate[] {
+  if (options.workerPool?.rankCandidates) {
+    return options.workerPool.rankCandidates(candidates)
+  }
+
+  const accepting = candidates.filter((c) => c.workerInfo.acceptingNewClients !== false)
+  const pool = accepting.length > 0 ? accepting : candidates
+
+  return pool.sort((a, b) => {
+    const aAuth = a.authorityRecord ? 1 : 0
+    const bAuth = b.authorityRecord ? 1 : 0
+    if (bAuth !== aAuth) return bAuth - aAuth
+
+    const aMqtt = a.mqttChallengeVerified ? 1 : 0
+    const bMqtt = b.mqttChallengeVerified ? 1 : 0
+    if (bMqtt !== aMqtt) return bMqtt - aMqtt
+
+    const aWeight = a.workerInfo.weight ?? 3
+    const bWeight = b.workerInfo.weight ?? 3
+    if (bWeight !== aWeight) return bWeight - aWeight
+
+    const aClients = a.workerInfo.currentClients ?? 0
+    const bClients = b.workerInfo.currentClients ?? 0
+    return aClients - bClients
+  })
+}
+
+export async function connectFirstDiscovery(
   address: ClientSideServerAddress,
   options: ClientSideServerMQTTWebRTCOptions,
+): Promise<{
+  primary: ClientSideServerPeerSession
+  discovery: Promise<ClientSideServerDiscoveryResult>
+}> {
+  const primaryPromise = createClientSideServerMQTTWebRTCPeerSession(address, options)
+
+  const discovery = discoverClientSideServers(address.serverName, options).then((result) => {
+    return primaryPromise.then((primary) => {
+      for (const candidate of result.candidates) {
+        if (candidate.identity && primary.identity
+          && clientSideServerPublicKeysEqual(candidate.identity.publicKeyJwk, primary.identity.publicKeyJwk)) {
+          candidate.alreadyConnected = true
+        }
+      }
+      return result
+    }).catch(() => result)
+  })
+
+  const primary = await primaryPromise
+  return { primary, discovery }
+}
+
+export async function createClientSideServerMQTTWebRTCPeerSession(
+  address: ClientSideServerAddress,
+  options: ClientSideServerMQTTWebRTCOptions,
+  targetInstanceId?: string,
 ): Promise<ClientSideServerPeerSession> {
   const webrtc = await resolveClientWebRTCImplementation()
   const mqtt = await connectToBroker(options)
@@ -401,6 +757,7 @@ async function createClientSideServerMQTTWebRTCPeerSession(
   const pendingCandidates: RTCIceCandidateInit[] = []
   const expectedIdentity = await resolveExpectedServerIdentity(address.serverName, options.identity)
   let open = true
+  let serverIdentity: ClientSideServerPublicIdentity | undefined
 
   await subscribe(mqtt, topic)
 
@@ -419,6 +776,7 @@ async function createClientSideServerMQTTWebRTCPeerSession(
         optionsIdentity: options.identity,
         expectedIdentity,
       })
+      serverIdentity = message.identity
       await peer.setRemoteDescription(webrtc.createSessionDescription(message.description))
       if (!expectedIdentity && message.authorityRecord && options.identity?.authority?.publicKeyJwk) {
         const trusted = await trustClientSideServerFromAuthorityRecord(
@@ -463,13 +821,15 @@ async function createClientSideServerMQTTWebRTCPeerSession(
   mqtt.on('message', onMessage)
   cleanupCallbacks.push(() => mqtt.off('message', onMessage))
 
+  const offerTarget = targetInstanceId ?? address.serverName
+
   peer.onicecandidate = (event: any) => {
     if (!event.candidate) return
     void publish(mqtt, topic, {
       protocol: 'plat-css-v1',
       kind: 'ice',
       senderId: peerId,
-      targetId: address.serverName,
+      targetId: offerTarget,
       connectionId,
       candidate: webrtc.serializeIceCandidate(event.candidate),
       at: Date.now(),
@@ -502,7 +862,7 @@ async function createClientSideServerMQTTWebRTCPeerSession(
     protocol: 'plat-css-v1',
     kind: 'offer',
     senderId: peerId,
-    targetId: address.serverName,
+    targetId: offerTarget,
     serverName: address.serverName,
     connectionId,
     description: offer,
@@ -526,6 +886,7 @@ async function createClientSideServerMQTTWebRTCPeerSession(
     connectionId,
     peerId,
     connectedAt: Date.now(),
+    identity: serverIdentity,
     isOpen: () => open && dataChannel.readyState === 'open',
     async sendPeer(event, data) {
       await channel.send({

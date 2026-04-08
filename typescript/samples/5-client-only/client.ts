@@ -1,13 +1,13 @@
-#!/usr/bin/env node
 /**
- * Auto-generated OpenAPI CLI.
+ * Auto-generated OpenAPI client bootstrap.
  * Source: /home/mod/Code/plat/typescript/samples/5-client-only/openapi.json
  * DO NOT EDIT MANUALLY.
  */
 
-import { runCli } from 'plat'
+import { OpenAPIClient, type OpenAPIClientConfig } from 'plat'
+import type { OpenAPISpec } from 'plat'
 
-const spec = {
+export const openAPISpec = {
   "openapi": "3.1.0",
   "info": {
     "title": "E-commerce API",
@@ -483,6 +483,18 @@ const spec = {
       }
     }
   }
-} as const
+} as const satisfies OpenAPISpec
 
-runCli(spec, process.argv.slice(2))
+export type ApiSpec = typeof openAPISpec
+export type ApiClient = OpenAPIClient<ApiSpec>
+
+export const defaultBaseUrl = "http://localhost:3000"
+
+export function createClient(
+  baseUrl: string = defaultBaseUrl,
+  config?: OpenAPIClientConfig,
+): ApiClient {
+  return new OpenAPIClient<ApiSpec>(openAPISpec, { ...config, baseUrl })
+}
+
+export default createClient

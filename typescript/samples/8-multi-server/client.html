@@ -1,0 +1,488 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Multi-Server Client</title>
+    <style>
+      :root {
+        --bg: #eff3ef;
+        --panel: rgba(251, 255, 253, 0.92);
+        --panel-2: #f6fbf8;
+        --ink: #182122;
+        --muted: #5f7270;
+        --accent: #24695b;
+        --accent-2: #cb5d3c;
+        --accent-3: #1b4f6e;
+        --border: #c9d8d1;
+        --shadow: 0 18px 38px rgba(27, 73, 63, 0.11);
+        --mono: "SFMono-Regular", "Menlo", "Consolas", monospace;
+        --sans: "Avenir Next", "Segoe UI", sans-serif;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; font-family: var(--sans); color: var(--ink);
+        background: radial-gradient(circle at top right, rgba(36,105,91,0.14), transparent 30%),
+          radial-gradient(circle at bottom left, rgba(203,93,60,0.12), transparent 26%), var(--bg);
+        min-height: 100vh; padding: 18px;
+      }
+      .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 18px; box-shadow: var(--shadow); padding: 18px; margin-bottom: 16px; }
+      h1 { margin: 0 0 4px; font-size: 1.5rem; }
+      h2 { margin: 0 0 10px; font-size: 0.9rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+      p { margin: 0; color: var(--muted); font-size: 0.9rem; }
+      .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
+      label { color: var(--muted); font-size: 0.85rem; }
+      input, select { border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; background: #fff; color: var(--ink); font: inherit; font-size: 0.85rem; }
+      input[type=number] { width: 70px; }
+      button { border: 0; border-radius: 999px; padding: 9px 16px; background: var(--accent); color: white; font-weight: 700; cursor: pointer; font: inherit; font-size: 0.85rem; }
+      button.secondary { background: #dfeae5; color: var(--ink); }
+      .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+      @media (max-width: 800px) { .grid-2 { grid-template-columns: 1fr; } }
+      .server-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
+      .server-card { border: 1px solid var(--border); border-radius: 16px; padding: 14px; background: linear-gradient(180deg, #fbfffd 0%, #f3faf6 100%); transition: border-color 0.2s; }
+      .server-card.active { border-color: var(--accent); border-width: 2px; }
+      .server-card.standby { border-color: #b8a950; border-width: 2px; }
+      .server-card.failed { border-color: var(--accent-2); border-width: 2px; opacity: 0.7; }
+      .server-card.discovered { border-style: dashed; }
+      .server-card .head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px; }
+      .server-card .instance-id { font-family: var(--mono); font-size: 0.8rem; font-weight: 700; color: var(--accent-3); }
+      .badge { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 999px; font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; }
+      .badge.active { background: #d4f5e9; color: #0f5a40; }
+      .badge.standby { background: #f5efc8; color: #6b5e10; }
+      .badge.draining { background: #f5ddd4; color: #6b2710; }
+      .badge.failed { background: #f5d4d4; color: #6b1010; }
+      .badge.discovered { background: #e8e8e8; color: #555; }
+      .badge.verified { background: #d4f5e9; color: #0f5a40; }
+      .badge.unverified { background: #f5efc8; color: #6b5e10; }
+      .props { display: grid; grid-template-columns: repeat(auto-fill, minmax(90px, 1fr)); gap: 6px; margin-top: 8px; }
+      .prop { font-size: 0.75rem; }
+      .prop strong { display: block; font-size: 0.95rem; }
+      .prop small { color: var(--muted); }
+      .fingerprint { font-family: var(--mono); font-size: 0.68rem; color: var(--muted); word-break: break-all; margin-top: 6px; }
+      .stats-row { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; margin-top: 12px; }
+      .stat { border: 1px solid var(--border); border-radius: 12px; padding: 10px; background: var(--panel-2); }
+      .stat strong { display: block; font-size: 1.15rem; }
+      .stat small { color: var(--muted); font-size: 0.72rem; }
+      .console { min-height: 140px; max-height: 240px; overflow: auto; padding: 12px; border-radius: 12px; font-family: var(--mono); font-size: 11px; white-space: pre-wrap; background: #1d2627; color: #d6ece5; margin-top: 10px; }
+      .response-log { background: #242224; color: #f5d7c8; }
+      .meta { color: var(--muted); font-size: 0.85rem; }
+      .meta.live { color: var(--accent); }
+      .meta.error { color: var(--accent-2); }
+      .empty-state { padding: 20px; border: 1px dashed var(--border); border-radius: 14px; color: var(--muted); text-align: center; font-size: 0.85rem; }
+    </style>
+    <script type="importmap">
+      {
+        "imports": {
+          "@modularizer/plat/client-server": "../../dist/client-server-entry.js",
+          "mqtt": "https://esm.sh/mqtt@5.15.1?bundle",
+          "typescript": "https://esm.sh/typescript@5.8.3",
+          "zod": "https://esm.sh/zod@3.23.8"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <div class="panel">
+      <h1>Multi-Server Client</h1>
+      <p>Auto-discovers and connects to all server tabs. Open server.html in multiple tabs first.</p>
+      <div class="row">
+        <label>Server Name: <input id="serverName" value="multi-demo" /></label>
+        <label>Max Workers: <input id="maxWorkers" type="number" min="1" max="20" value="5" /></label>
+        <label>Strategy:
+          <select id="strategy">
+            <option value="round-robin">Round Robin</option>
+            <option value="weighted-random">Weighted Random</option>
+            <option value="least-pending">Least Pending</option>
+          </select>
+        </label>
+        <button class="secondary" id="disconnectBtn">Disconnect All</button>
+        <span class="meta" id="statusText">Starting...</span>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Servers</h2>
+      <div class="stats-row" id="discoveryStats">
+        <div class="stat"><strong id="totalDiscovered">0</strong><small>Discovered</small></div>
+        <div class="stat"><strong id="totalVerified">0</strong><small>MQTT Verified</small></div>
+        <div class="stat"><strong id="totalActive">0</strong><small>Active Workers</small></div>
+        <div class="stat"><strong id="totalFailed">0</strong><small>Failed</small></div>
+      </div>
+      <div class="server-grid" id="serverGrid" style="margin-top: 14px;">
+        <div class="empty-state">Searching for servers...</div>
+      </div>
+    </div>
+
+    <div class="grid-2">
+      <div class="panel">
+        <h2>Test Requests</h2>
+        <div class="row">
+          <button id="sendEchoBtn">Echo</button>
+          <button id="sendWorkBtn">Work (1s)</button>
+          <button id="burstBtn">Burst 10</button>
+          <button class="secondary" id="healthBtn">Health All</button>
+        </div>
+        <div class="stats-row" style="margin-top: 12px;">
+          <div class="stat"><strong id="reqSent">0</strong><small>Sent</small></div>
+          <div class="stat"><strong id="reqOk">0</strong><small>OK</small></div>
+          <div class="stat"><strong id="reqFail">0</strong><small>Failed</small></div>
+        </div>
+        <div class="console response-log" id="responseLog"></div>
+      </div>
+      <div class="panel">
+        <h2>Event Log</h2>
+        <div class="console" id="eventLog"></div>
+      </div>
+    </div>
+
+    <script type="module">
+      import {
+        discoverClientSideServers,
+        createClientSideServerMQTTWebRTCPeerSession,
+        parseClientSideServerAddress,
+        clientSideServerPublicKeysEqual,
+      } from '@modularizer/plat/client-server'
+
+      // --- State ---
+      let workers = []       // { id, candidate, session, status, weight, pending, reqs, errors, lastPong }
+      let candidates = []    // latest discovery results
+      let stats = { sent: 0, ok: 0, fail: 0 }
+      let rrIdx = 0
+      let stopped = false
+
+      // --- DOM ---
+      const $ = (id) => document.getElementById(id)
+      const eventLog = $('eventLog')
+      const responseLog = $('responseLog')
+
+      function log(msg) {
+        eventLog.textContent += `[${new Date().toLocaleTimeString()}] ${msg}\n`
+        eventLog.scrollTop = eventLog.scrollHeight
+      }
+      function logR(msg) {
+        responseLog.textContent += `[${new Date().toLocaleTimeString()}] ${msg}\n`
+        responseLog.scrollTop = responseLog.scrollHeight
+      }
+      function setStatus(t, tone) {
+        const el = $('statusText')
+        el.textContent = t
+        el.className = 'meta'
+        if (tone) el.classList.add(tone)
+      }
+
+      // --- Core loop: discover + connect, repeats every few seconds ---
+      async function loop() {
+        while (!stopped) {
+          try {
+            await discoverAndConnect()
+          } catch (e) {
+            log(`Loop error: ${e.message}`)
+          }
+          render()
+          await sleep(4000)
+        }
+      }
+
+      async function discoverAndConnect() {
+        const name = $('serverName').value.trim() || 'multi-demo'
+        const maxWorkers = Number($('maxWorkers').value) || 5
+
+        // Remove dead workers
+        for (const w of workers) {
+          if (w.status === 'failed' || w.status === 'closed') continue
+          try {
+            if (!w.session.isOpen()) {
+              w.status = 'failed'
+              log(`Worker ${w.id} disconnected.`)
+            }
+          } catch {
+            w.status = 'failed'
+          }
+        }
+        workers = workers.filter(w => w.status !== 'closed')
+
+        // Discover
+        const result = await discoverClientSideServers(name, {
+          workerPool: { discoveryTimeoutMs: 3000 },
+        })
+        candidates = result.candidates
+
+        if (candidates.length === 0) {
+          setStatus('No servers found. Retrying...', 'error')
+          return
+        }
+
+        // Figure out which candidates we're already connected to (by instanceId, not fingerprint,
+        // because server tabs on the same origin share the same localStorage key pair and therefore
+        // all have the same identity fingerprint — using fingerprint would incorrectly mark every
+        // new server as "already connected" once any one server is in the pool).
+        const connectedInstanceIds = new Set()
+        for (const w of workers) {
+          if (w.status === 'failed') continue
+          if (w.candidate?.instanceId) connectedInstanceIds.add(w.candidate.instanceId)
+        }
+        for (const c of candidates) {
+          c._connected = connectedInstanceIds.has(c.instanceId)
+        }
+
+        const liveWorkers = workers.filter(w => w.status === 'active')
+        const needed = maxWorkers - liveWorkers.length
+        if (needed <= 0) {
+          setStatus(`${liveWorkers.length} active worker(s).`, 'live')
+          return
+        }
+
+        // Connect to unconnected candidates
+        const address = parseClientSideServerAddress(`css://${name}`)
+        const toConnect = candidates.filter(c => !c._connected)
+
+        for (const candidate of toConnect) {
+          if (workers.filter(w => w.status === 'active').length >= maxWorkers) break
+          if (stopped) break
+
+          const shortName = candidate.instanceId.split(':').pop().slice(0, 8)
+          log(`Connecting to ${shortName}...`)
+          try {
+            const session = await createClientSideServerMQTTWebRTCPeerSession(
+              address, {}, candidate.instanceId,
+            )
+            const w = {
+              id: shortName,
+              candidate,
+              session,
+              status: 'active',
+              weight: candidate.workerInfo?.weight ?? 3,
+              pending: 0,
+              reqs: 0,
+              errors: 0,
+              lastPong: Date.now(),
+            }
+            workers.push(w)
+
+            // Listen for pong / drain
+            session.subscribe((msg) => {
+              if (msg.platcss === 'pong') w.lastPong = Date.now()
+              if (msg.platcss === 'drain') {
+                log(`${w.id} is draining.`)
+                w.status = 'draining'
+                render()
+              }
+            })
+
+            log(`Connected to ${shortName} (w=${w.weight}).`)
+          } catch (e) {
+            log(`Failed to connect to ${shortName}: ${e.message}`)
+          }
+          render()
+        }
+
+        const active = workers.filter(w => w.status === 'active').length
+        setStatus(`${active} active worker(s), ${candidates.length} discovered.`, active > 0 ? 'live' : 'error')
+      }
+
+      // --- Request routing ---
+      function pickWorker() {
+        const active = workers.filter(w => w.status === 'active')
+        if (active.length === 0) return null
+        const strat = $('strategy').value
+        if (strat === 'round-robin') {
+          rrIdx = (rrIdx + 1) % active.length
+          return active[rrIdx]
+        }
+        if (strat === 'least-pending') {
+          return active.slice().sort((a, b) => a.pending - b.pending)[0]
+        }
+        // weighted-random
+        const total = active.reduce((s, w) => s + Math.max(w.weight, 1), 0)
+        let r = Math.random() * total
+        for (const w of active) {
+          r -= Math.max(w.weight, 1)
+          if (r <= 0) return w
+        }
+        return active[active.length - 1]
+      }
+
+      function sendRPC(worker, method, input) {
+        stats.sent++
+        worker.pending++
+        worker.reqs++
+        updateStats()
+
+        const id = `r-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+
+        return new Promise((resolve, reject) => {
+          let done = false
+          const timer = setTimeout(() => finish(false, 'timeout'), 15000)
+
+          const unsub = worker.session.subscribe((msg) => {
+            if (msg.id !== id) return
+            if (done) return
+            if ('ok' in msg && !('event' in msg)) {
+              finish(msg.ok, msg.ok ? msg.result : msg.error?.message)
+            } else if (msg.event === 'progress') {
+              logR(`${worker.id} progress: ${JSON.stringify(msg.data).slice(0, 100)}`)
+            }
+          })
+
+          function finish(ok, data) {
+            if (done) return
+            done = true
+            clearTimeout(timer)
+            unsub()
+            worker.pending--
+            if (ok) {
+              stats.ok++
+              resolve(data)
+            } else {
+              worker.errors++
+              stats.fail++
+              reject(typeof data === 'string' ? new Error(data) : data)
+            }
+            updateStats()
+            render()
+          }
+
+          worker.session.send({ jsonrpc: '2.0', id, method: 'POST', path: `/${method}`, input })
+        })
+      }
+
+      async function sendRequest(method, input) {
+        const w = pickWorker()
+        if (!w) {
+          logR(`No active worker for ${method}`)
+          stats.fail++
+          updateStats()
+          return
+        }
+        try {
+          const r = await sendRPC(w, method, input)
+          logR(`${w.id} ${method}: ${JSON.stringify(r).slice(0, 150)}`)
+          return r
+        } catch (e) {
+          logR(`${w.id} ${method}: ERR ${e.message}`)
+        }
+      }
+
+      function updateStats() {
+        $('reqSent').textContent = stats.sent
+        $('reqOk').textContent = stats.ok
+        $('reqFail').textContent = stats.fail
+      }
+
+      // --- Render ---
+      function render() {
+        const active = workers.filter(w => w.status === 'active')
+        const failed = workers.filter(w => w.status === 'failed')
+        $('totalDiscovered').textContent = candidates.length
+        $('totalVerified').textContent = candidates.filter(c => c.mqttChallengeVerified).length
+        $('totalActive').textContent = active.length
+        $('totalFailed').textContent = failed.length
+
+        const grid = $('serverGrid')
+        grid.innerHTML = ''
+
+        if (candidates.length === 0 && workers.length === 0) {
+          grid.innerHTML = '<div class="empty-state">Searching for servers...</div>'
+          return
+        }
+
+        // Render workers
+        for (const w of workers) {
+          if (w.status === 'closed') continue
+          grid.appendChild(workerCard(w))
+        }
+
+        // Render discovered-but-not-connected
+        for (const c of candidates.filter(c => !c._connected)) {
+          grid.appendChild(candidateCard(c))
+        }
+      }
+
+      function workerCard(w) {
+        const card = document.createElement('div')
+        card.className = `server-card ${w.status}`
+        const fp = w.session?.identity?.fingerprint?.slice(0, 16) || w.candidate?.identity?.fingerprint?.slice(0, 16) || '-'
+        const open = (() => { try { return w.session?.isOpen() } catch { return false } })()
+        const pong = w.lastPong ? `${((Date.now() - w.lastPong) / 1000).toFixed(0)}s` : '-'
+        const ci = w.candidate?.workerInfo
+        card.innerHTML = `
+          <div class="head">
+            <span class="instance-id">${w.id}</span>
+            <span class="badge ${w.status}">${w.status}</span>
+          </div>
+          <div class="props">
+            <div class="prop"><strong>${w.weight}</strong><small>Weight</small></div>
+            <div class="prop"><strong>${w.pending}</strong><small>Pending</small></div>
+            <div class="prop"><strong>${w.reqs}</strong><small>Requests</small></div>
+            <div class="prop"><strong>${w.errors}</strong><small>Errors</small></div>
+            <div class="prop"><strong>${open ? 'Yes' : 'No'}</strong><small>Open</small></div>
+            <div class="prop"><strong>${pong}</strong><small>Pong</small></div>
+          </div>
+          ${ci ? `<div class="props" style="margin-top:4px">
+            <div class="prop"><strong>${ci.currentClients ?? '-'}</strong><small>Srv Clients</small></div>
+            <div class="prop"><strong>${ci.acceptingNewClients !== false ? 'Yes' : 'No'}</strong><small>Accepting</small></div>
+          </div>` : ''}
+          <div class="fingerprint">Key: ${fp}</div>
+          <div style="margin-top:6px">
+            ${w.candidate?.mqttChallengeVerified ? '<span class="badge verified">MQTT OK</span>' : '<span class="badge unverified">Unverified</span>'}
+          </div>`
+        return card
+      }
+
+      function candidateCard(c) {
+        const card = document.createElement('div')
+        card.className = 'server-card discovered'
+        const id = c.instanceId.split(':').pop().slice(0, 8)
+        const fp = c.identity?.fingerprint?.slice(0, 16) || '-'
+        card.innerHTML = `
+          <div class="head">
+            <span class="instance-id">${id}</span>
+            <span class="badge discovered">Discovered</span>
+          </div>
+          <div class="props">
+            <div class="prop"><strong>${c.workerInfo?.weight ?? 3}</strong><small>Weight</small></div>
+            <div class="prop"><strong>${c.workerInfo?.currentClients ?? 0}</strong><small>Clients</small></div>
+          </div>
+          <div class="fingerprint">Key: ${fp}</div>
+          <div style="margin-top:6px">
+            ${c.mqttChallengeVerified ? '<span class="badge verified">MQTT OK</span>' : '<span class="badge unverified">Unverified</span>'}
+          </div>`
+        return card
+      }
+
+      // --- Buttons ---
+      $('disconnectBtn').addEventListener('click', () => {
+        stopped = true
+        for (const w of workers) { w.status = 'closed'; w.session?.close?.() }
+        workers = []; candidates = []
+        stats = { sent: 0, ok: 0, fail: 0 }
+        setStatus('Disconnected.')
+        log('Disconnected.')
+        render(); updateStats()
+      })
+      $('sendEchoBtn').addEventListener('click', () => sendRequest('echo', { message: `hi-${Date.now()}` }))
+      $('sendWorkBtn').addEventListener('click', () => sendRequest('work', { durationMs: 1000 }))
+      $('burstBtn').addEventListener('click', async () => {
+        logR('--- Burst 10 ---')
+        await Promise.allSettled(Array.from({ length: 10 }, (_, i) => sendRequest('echo', { message: `burst-${i}` })))
+        logR('--- Done ---')
+      })
+      $('healthBtn').addEventListener('click', async () => {
+        for (const w of workers.filter(w => w.status === 'active')) {
+          try {
+            const r = await sendRPC(w, 'health', {})
+            logR(`${w.id} health: up=${r.uptime}ms ok=${r.ok}`)
+          } catch (e) { logR(`${w.id} health: ${e.message}`) }
+        }
+      })
+
+      // --- Helpers ---
+      function sleep(ms) { return new Promise(r => setTimeout(r, ms)) }
+
+      // --- Go ---
+      log('Starting auto-discovery loop...')
+      render()
+      loop()
+    </script>
+  </body>
+</html>

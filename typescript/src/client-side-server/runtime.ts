@@ -7,6 +7,7 @@ import {
   createClientSideServerMQTTWebRTCTransportPlugin,
   type ClientSideServerMQTTWebRTCOptions,
   type ClientSideServerMQTTWebRTCServer,
+  type ClientSideServerWorkerInfo,
 } from './mqtt-webrtc'
 import { createClientSideServer, type PLATClientSideServer } from './server'
 import { fetchClientSideServerOpenAPI } from './bootstrap'
@@ -32,6 +33,7 @@ export interface ClientSideServerSourceModule {
 export interface StartClientSideServerFromSourceOptions extends ClientSideServerMQTTWebRTCOptions {
   serverName?: string
   undecoratedMode?: 'GET' | 'POST' | 'private'
+  workerInfo?: ClientSideServerWorkerInfo
   source: string | Record<string, string>
   /**
    * Optional: specify which file is the entry point when using multiple source files.
@@ -200,6 +202,8 @@ export async function startClientSideServerFromSource(
     connectionTimeoutMs: options.connectionTimeoutMs,
     announceIntervalMs: options.announceIntervalMs,
     clientIdPrefix: options.clientIdPrefix,
+    identity: options.identity,
+    workerInfo: (options as any).workerInfo,
   })
 
   await signaler.start()

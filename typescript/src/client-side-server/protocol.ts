@@ -45,6 +45,41 @@ export interface ClientSideServerPeerMessage {
   fromServerName?: string
 }
 
+export interface ClientSideServerPingMessage {
+  platcss: 'ping'
+  ts: number
+}
+
+export interface ClientSideServerPongMessage {
+  platcss: 'pong'
+  ts: number
+}
+
+export interface ClientSideServerDrainMessage {
+  platcss: 'drain'
+}
+
+export interface ClientSideServerPrivateChallengeRequest {
+  platcss: 'private-challenge'
+  challengeNonce: string
+  clientIdentity?: import('./identity').ClientSideServerPublicIdentity
+}
+
+export interface ClientSideServerPrivateChallengeResponse {
+  platcss: 'private-challenge-response'
+  challengeNonce: string
+  challengeSignature: string
+  identity: import('./identity').ClientSideServerPublicIdentity
+  authorityRecord?: import('./identity').ClientSideServerSignedAuthorityRecord
+}
+
+export type ClientSideServerControlMessage =
+  | ClientSideServerPingMessage
+  | ClientSideServerPongMessage
+  | ClientSideServerDrainMessage
+  | ClientSideServerPrivateChallengeRequest
+  | ClientSideServerPrivateChallengeResponse
+
 export type ClientSideServerResponse =
   | ClientSideServerSuccessResponse
   | ClientSideServerErrorResponse
@@ -57,9 +92,17 @@ export type ClientSideServerRPCMessage =
 export type ClientSideServerMessage =
   | ClientSideServerRPCMessage
   | ClientSideServerPeerMessage
+  | ClientSideServerControlMessage
 
 export function isClientSideServerPeerMessage(message: ClientSideServerMessage): message is ClientSideServerPeerMessage {
   return 'platcss' in message && message.platcss === 'peer'
+}
+
+export function isClientSideServerControlMessage(message: ClientSideServerMessage): message is ClientSideServerControlMessage {
+  if (!('platcss' in message)) return false
+  const kind = (message as any).platcss
+  return kind === 'ping' || kind === 'pong' || kind === 'drain'
+    || kind === 'private-challenge' || kind === 'private-challenge-response'
 }
 
 export function isClientSideServerRequestMessage(message: ClientSideServerMessage): message is ClientSideServerRequest {

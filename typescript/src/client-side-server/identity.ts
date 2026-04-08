@@ -102,18 +102,52 @@ export function createInMemoryClientSideServerStorage(
 }
 
 export function saveTrustedClientSideServerRecordToMap(
-  knownHosts: Record<string, ClientSideServerTrustedServerRecord>,
+  knownHosts: Record<string, ClientSideServerTrustedServerRecord | ClientSideServerTrustedServerRecord[]>,
   record: ClientSideServerTrustedServerRecord,
 ): void {
-  knownHosts[record.serverName] = record
+  const existing = knownHosts[record.serverName]
+  if (!existing) {
+    knownHosts[record.serverName] = record
+    return
+  }
+
+  const list = Array.isArray(existing) ? existing : [existing]
+  const idx = list.findIndex((r) => clientSideServerPublicKeysEqual(r.publicKeyJwk, record.publicKeyJwk))
+  if (idx >= 0) {
+    list[idx] = record
+  } else {
+    list.push(record)
+  }
+  knownHosts[record.serverName] = list.length === 1 ? list[0]! : list
 }
 
 export function loadTrustedClientSideServerRecordFromMap(
-  knownHosts: Record<string, ClientSideServerTrustedServerRecord> | undefined,
+  knownHosts: Record<string, ClientSideServerTrustedServerRecord | ClientSideServerTrustedServerRecord[]> | undefined,
   serverName: string,
 ): ClientSideServerTrustedServerRecord | null {
   if (!knownHosts) return null
-  return knownHosts[serverName] ?? null
+  const entry = knownHosts[serverName]
+  if (!entry) return null
+  return Array.isArray(entry) ? entry[0] ?? null : entry
+}
+
+export function loadAllTrustedClientSideServerRecordsForName(
+  knownHosts: Record<string, ClientSideServerTrustedServerRecord | ClientSideServerTrustedServerRecord[]> | undefined,
+  serverName: string,
+): ClientSideServerTrustedServerRecord[] {
+  if (!knownHosts) return []
+  const entry = knownHosts[serverName]
+  if (!entry) return []
+  return Array.isArray(entry) ? entry : [entry]
+}
+
+export function isTrustedPublicKeyForServer(
+  knownHosts: Record<string, ClientSideServerTrustedServerRecord | ClientSideServerTrustedServerRecord[]> | undefined,
+  serverName: string,
+  publicKeyJwk: JsonWebKey,
+): boolean {
+  const records = loadAllTrustedClientSideServerRecordsForName(knownHosts, serverName)
+  return records.some((r) => clientSideServerPublicKeysEqual(r.publicKeyJwk, publicKeyJwk))
 }
 
 export async function generateClientSideServerIdentityKeyPair(
