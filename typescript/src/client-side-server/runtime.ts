@@ -34,6 +34,11 @@ export interface StartClientSideServerFromSourceOptions extends ClientSideServer
   serverName?: string
   undecoratedMode?: 'GET' | 'POST' | 'private'
   workerInfo?: ClientSideServerWorkerInfo
+  /**
+   * Version / identity metadata published in MQTT announces and via the `/server-info` endpoint.
+   * `openapiHash` and `serverStartedAt` are auto-computed; the rest are user-supplied.
+   */
+  instanceInfo?: import('./protocol').ClientSideServerInstanceInfo
   source: string | Record<string, string>
   /**
    * Optional: specify which file is the entry point when using multiple source files.
@@ -176,6 +181,7 @@ export async function startClientSideServerFromSource(
   }
   const server = createClientSideServer({
     undecoratedMode: options.undecoratedMode,
+    instanceInfo: (options as any).instanceInfo,
   }, ...definition.controllers)
 
   if (options.onRequest) {
@@ -204,6 +210,7 @@ export async function startClientSideServerFromSource(
     clientIdPrefix: options.clientIdPrefix,
     identity: options.identity,
     workerInfo: (options as any).workerInfo,
+    instanceInfo: (options as any).instanceInfo,
   })
 
   await signaler.start()

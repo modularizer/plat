@@ -37,6 +37,7 @@ import type { PLATAuthorityServerOptions } from '../server/authority-server'
 import { createAuthorityServerController } from '../server/authority-server'
 import type { ClientSideServerChannel } from './channel'
 import type {
+  ClientSideServerInstanceInfo,
   ClientSideServerMessage,
   ClientSideServerRequest,
 } from './protocol'
@@ -73,6 +74,11 @@ export interface ClientSideServerOptions {
   onChannelOpen?: (channel: ClientSideServerChannel) => void | Promise<void>
   onChannelClose?: (channel: ClientSideServerChannel) => void | Promise<void>
   middleware?: ClientSideServerMiddleware[]
+  /**
+   * Static metadata published via the `/server-info` endpoint and MQTT announces.
+   * `openapiHash` and `serverStartedAt` are auto-computed if not provided.
+   */
+  instanceInfo?: ClientSideServerInstanceInfo
 }
 
 export interface ClientSideServerMiddlewareContext {
@@ -98,6 +104,9 @@ export class PLATClientSideServer {
   private openapiCache?: Record<string, any>
   private logger: Logger
   private middleware: ClientSideServerMiddleware[]
+  private readonly serverCreatedAt = Date.now()
+  private openapiHashComputed = false
+  private openapiHashValue?: string
 
   constructor(
     private options: ClientSideServerOptions = {},
@@ -137,6 +146,8 @@ export class PLATClientSideServer {
   register(...ControllerClasses: (new () => any)[]): this {
     this.core.registerControllers(...ControllerClasses)
     this.openapiCache = undefined
+    this.openapiHashComputed = false
+    this.openapiHashValue = undefined
     return this
   }
 
@@ -154,6 +165,37 @@ export class PLATClientSideServer {
       this.openapiCache = this.generateOpenAPISpec()
     }
     return this.openapiCache
+  }
+
+  /**
+   * Returns the server's self-identification metadata.
+   * `openapiHash` is computed (and cached) from the current openapi spec.
+   * `serverStartedAt` is set to the time this PLATClientSideServer was constructed.
+   * User-supplied fields (`version`, `versionHash`, `updatedAt`) come from options.
+   */
+  async getServerInfo(): Promise<ClientSideServerInstanceInfo> {
+    return {
+      ...this.options.instanceInfo,
+      openapiHash: await this.getOrComputeOpenapiHash(),
+      serverStartedAt: this.options.instanceInfo?.serverStartedAt ?? this.serverCreatedAt,
+    }
+  }
+
+  private async getOrComputeOpenapiHash(): Promise<string | undefined> {
+    if (this.openapiHashComputed) return this.openapiHashValue
+    this.openapiHashComputed = true
+    try {
+      const subtle = globalThis.crypto?.subtle
+      if (!subtle) return undefined
+      const text = cssStableStringify(this.openapi)
+      const digest = await subtle.digest('SHA-256', new TextEncoder().encode(text))
+      this.openapiHashValue = Array.from(new Uint8Array(digest))
+        .map((b) => b.toString(16).padStart(2, '0'))
+        .join('')
+    } catch {
+      this.openapiHashValue = undefined
+    }
+    return this.openapiHashValue
   }
 
   async handleMessage(
@@ -180,6 +222,16 @@ export class PLATClientSideServer {
         id: message.id,
         ok: true,
         result: this.tools,
+      })
+      return
+    }
+
+    if (message.method.toUpperCase() === 'GET' && message.path === '/server-info') {
+      await channel.send({
+        jsonrpc: '2.0',
+        id: message.id,
+        ok: true,
+        result: await this.getServerInfo(),
       })
       return
     }
@@ -556,3 +608,21 @@ export function createClientSideServer(
 ): PLATClientSideServer {
   return new PLATClientSideServer(options, ...ControllerClasses)
 }
+
+/** Stable JSON stringify with sorted keys — ensures same spec always produces same hash. */
+function cssStableStringify(value: unknown): string {
+  return JSON.stringify(cssSortValue(value))
+}
+
+function cssSortValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(cssSortValue)
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([k, v]) => [k, cssSortValue(v)]),
+    )
+  }
+  return value
+}
+

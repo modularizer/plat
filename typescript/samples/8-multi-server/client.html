@@ -121,6 +121,7 @@
           <button id="sendWorkBtn">Work (1s)</button>
           <button id="burstBtn">Burst 10</button>
           <button class="secondary" id="healthBtn">Health All</button>
+          <button class="secondary" id="serverInfoBtn">Server Info All</button>
         </div>
         <div class="stats-row" style="margin-top: 12px;">
           <div class="stat"><strong id="reqSent">0</strong><small>Sent</small></div>
@@ -405,6 +406,8 @@
         const open = (() => { try { return w.session?.isOpen() } catch { return false } })()
         const pong = w.lastPong ? `${((Date.now() - w.lastPong) / 1000).toFixed(0)}s` : '-'
         const ci = w.candidate?.workerInfo
+        const ii = w.candidate?.instanceInfo
+        const startedAgo = ii?.serverStartedAt ? `${Math.round((Date.now() - ii.serverStartedAt) / 1000)}s ago` : '-'
         card.innerHTML = `
           <div class="head">
             <span class="instance-id">${w.id}</span>
@@ -422,6 +425,13 @@
             <div class="prop"><strong>${ci.currentClients ?? '-'}</strong><small>Srv Clients</small></div>
             <div class="prop"><strong>${ci.acceptingNewClients !== false ? 'Yes' : 'No'}</strong><small>Accepting</small></div>
           </div>` : ''}
+          ${ii ? `<div class="props" style="margin-top:4px">
+            <div class="prop"><strong>${ii.version || '-'}</strong><small>Version</small></div>
+            <div class="prop"><strong>${ii.versionHash ? ii.versionHash.slice(0,8) : '-'}</strong><small>Ver Hash</small></div>
+            <div class="prop"><strong>${ii.openapiHash ? ii.openapiHash.slice(0,8)+'…' : '-'}</strong><small>API Hash</small></div>
+            <div class="prop"><strong>${ii.updatedAt ? new Date(ii.updatedAt).toLocaleDateString() : '-'}</strong><small>Updated</small></div>
+            <div class="prop"><strong>${startedAgo}</strong><small>Started</small></div>
+          </div>` : ''}
           <div class="fingerprint">Key: ${fp}</div>
           <div style="margin-top:6px">
             ${w.candidate?.mqttChallengeVerified ? '<span class="badge verified">MQTT OK</span>' : '<span class="badge unverified">Unverified</span>'}
@@ -434,6 +444,8 @@
         card.className = 'server-card discovered'
         const id = c.instanceId.split(':').pop().slice(0, 8)
         const fp = c.identity?.fingerprint?.slice(0, 16) || '-'
+        const ii = c.instanceInfo
+        const startedAgo = ii?.serverStartedAt ? `${Math.round((Date.now() - ii.serverStartedAt) / 1000)}s ago` : '-'
         card.innerHTML = `
           <div class="head">
             <span class="instance-id">${id}</span>
@@ -443,6 +455,13 @@
             <div class="prop"><strong>${c.workerInfo?.weight ?? 3}</strong><small>Weight</small></div>
             <div class="prop"><strong>${c.workerInfo?.currentClients ?? 0}</strong><small>Clients</small></div>
           </div>
+          ${ii ? `<div class="props" style="margin-top:4px">
+            <div class="prop"><strong>${ii.version || '-'}</strong><small>Version</small></div>
+            <div class="prop"><strong>${ii.versionHash ? ii.versionHash.slice(0,8) : '-'}</strong><small>Ver Hash</small></div>
+            <div class="prop"><strong>${ii.openapiHash ? ii.openapiHash.slice(0,8)+'…' : '-'}</strong><small>API Hash</small></div>
+            <div class="prop"><strong>${ii.updatedAt ? new Date(ii.updatedAt).toLocaleDateString() : '-'}</strong><small>Updated</small></div>
+            <div class="prop"><strong>${startedAgo}</strong><small>Started</small></div>
+          </div>` : ''}
           <div class="fingerprint">Key: ${fp}</div>
           <div style="margin-top:6px">
             ${c.mqttChallengeVerified ? '<span class="badge verified">MQTT OK</span>' : '<span class="badge unverified">Unverified</span>'}
@@ -473,6 +492,23 @@
             const r = await sendRPC(w, 'health', {})
             logR(`${w.id} health: up=${r.uptime}ms ok=${r.ok}`)
           } catch (e) { logR(`${w.id} health: ${e.message}`) }
+        }
+      })
+      $('serverInfoBtn').addEventListener('click', async () => {
+        for (const w of workers.filter(w => w.status === 'active')) {
+          try {
+            const id = `si-${Date.now()}-${Math.random().toString(36).slice(2,6)}`
+            const info = await new Promise((resolve, reject) => {
+              const timer = setTimeout(() => reject(new Error('timeout')), 10000)
+              const unsub = w.session.subscribe(msg => {
+                if (msg.id !== id) return
+                clearTimeout(timer); unsub()
+                if (msg.ok) resolve(msg.result); else reject(new Error(msg.error?.message))
+              })
+              w.session.send({ jsonrpc: '2.0', id, method: 'GET', path: '/server-info', input: {} })
+            })
+            logR(`${w.id} server-info: ${JSON.stringify(info)}`)
+          } catch (e) { logR(`${w.id} server-info: ERR ${e.message}`) }
         }
       })
 

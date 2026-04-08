@@ -1,5 +1,26 @@
 import type { PLATRPCEventKind } from '../rpc'
 
+/**
+ * Version and identity metadata that a server publishes about itself.
+ * All fields are optional — servers populate what they know.
+ * `openapiHash` and `serverStartedAt` are auto-computed; the rest are user-supplied.
+ */
+export interface ClientSideServerInstanceInfo {
+  /** Semantic version string, e.g. "1.2.3" or "2026-04-07". */
+  version?: string
+  /** Commit hash, build hash, or any content-identifier for the server code. */
+  versionHash?: string
+  /**
+   * SHA-256 hex digest of the server's openapi.json (computed automatically
+   * from the generated spec; stable for the same set of controllers and options).
+   */
+  openapiHash?: string
+  /** Unix timestamp (ms) when the server code / deployment was last updated. */
+  updatedAt?: number
+  /** Unix timestamp (ms) when this server instance started (auto-set on start). */
+  serverStartedAt?: number
+}
+
 export interface ClientSideServerRequest {
   jsonrpc: '2.0'
   id: string

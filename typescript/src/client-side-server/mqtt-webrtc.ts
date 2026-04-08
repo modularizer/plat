@@ -25,6 +25,7 @@ import {
 } from './identity'
 import {
   isClientSideServerPeerMessage,
+  type ClientSideServerInstanceInfo,
   type ClientSideServerMessage,
   type ClientSideServerPeerMessage,
   type ClientSideServerPingMessage,
@@ -73,6 +74,7 @@ interface ClientSideServerSignalingMessageBase {
   challengeNonce?: string
   challengeSignature?: string
   workerInfo?: ClientSideServerWorkerInfo
+  instanceInfo?: ClientSideServerInstanceInfo
   clientIdentity?: ClientSideServerPublicIdentity
   at: number
 }
@@ -100,6 +102,7 @@ export interface ClientSideServerDiscoveryCandidate {
   authorityRecord?: ClientSideServerSignedAuthorityRecord
   mqttChallengeVerified: boolean
   workerInfo: ClientSideServerWorkerInfo
+  instanceInfo?: ClientSideServerInstanceInfo
   discoveredAt: number
   alreadyConnected: boolean
 }
@@ -145,6 +148,12 @@ export interface ClientSideServerMQTTWebRTCServerOptions extends ClientSideServe
   serverName: string
   server: PLATClientSideServer
   workerInfo?: ClientSideServerWorkerInfo
+  /**
+   * Override or supplement the instance info from the PLATClientSideServer.
+   * If not provided, instance info is read from the server's own options.
+   * `openapiHash` and `serverStartedAt` are always auto-computed.
+   */
+  instanceInfo?: ClientSideServerInstanceInfo
 }
 
 export interface ClientSideServerIdentityOptions {
@@ -195,6 +204,7 @@ export class ClientSideServerMQTTWebRTCServer {
   private identityKeyPair?: ClientSideServerExportedKeyPair
   private publicIdentity?: ClientSideServerPublicIdentity
   private clientCount = 0
+  private resolvedInstanceInfo?: ClientSideServerInstanceInfo
 
   constructor(private options: ClientSideServerMQTTWebRTCServerOptions) {
     this.serverInstanceId = `${options.serverName}:${randomId('server')}`
@@ -213,6 +223,10 @@ export class ClientSideServerMQTTWebRTCServer {
       void this.onMessage(payload)
     })
     await subscribe(this.mqtt, this.options.mqttTopic ?? DEFAULT_CLIENT_SIDE_SERVER_MQTT_TOPIC)
+
+    // Compute and cache instance info (includes openapi hash) before first announce
+    this.resolvedInstanceInfo = await this.buildResolvedInstanceInfo()
+
     await this.announce()
 
     const intervalMs = this.options.announceIntervalMs ?? 30_000
@@ -252,6 +266,7 @@ export class ClientSideServerMQTTWebRTCServer {
       serverName: this.options.serverName,
       identity: this.publicIdentity,
       authorityRecord: this.options.identity?.authorityRecord,
+      instanceInfo: this.resolvedInstanceInfo,
       at: Date.now(),
     })
   }
@@ -314,8 +329,21 @@ export class ClientSideServerMQTTWebRTCServer {
       challengeNonce: message.challengeNonce,
       challengeSignature,
       workerInfo: this.buildWorkerInfo(),
+      instanceInfo: this.resolvedInstanceInfo,
       at: Date.now(),
     })
+  }
+
+  private async buildResolvedInstanceInfo(): Promise<ClientSideServerInstanceInfo> {
+    // Merge: options.instanceInfo (user override) > server.getServerInfo() (auto-computed)
+    const serverInfo = await this.options.server.getServerInfo()
+    return {
+      ...serverInfo,
+      ...(this.options.instanceInfo ?? {}),
+      // Always override openapiHash and serverStartedAt with freshly computed values
+      openapiHash: this.options.instanceInfo?.openapiHash ?? serverInfo.openapiHash,
+      serverStartedAt: Date.now(),
+    }
   }
 
   private buildWorkerInfo(): ClientSideServerWorkerInfo | undefined {
@@ -377,6 +405,7 @@ export class ClientSideServerMQTTWebRTCServer {
         serverName: this.options.serverName,
         identity: this.publicIdentity,
         workerInfo: { ...this.buildWorkerInfo(), acceptingNewClients: false },
+        instanceInfo: this.resolvedInstanceInfo,
         at: Date.now(),
       })
     }
@@ -652,6 +681,7 @@ export async function discoverClientSideServers(
         acceptingNewClients: message.workerInfo?.acceptingNewClients ?? true,
         loadBalancing: message.workerInfo?.loadBalancing,
       },
+      instanceInfo: message.instanceInfo,
       discoveredAt: Date.now(),
       alreadyConnected: false,
     })
