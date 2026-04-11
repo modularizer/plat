@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import inspect
 import logging
+import re
 from dataclasses import dataclass, field
 import time
 import sys
@@ -78,6 +79,7 @@ class BrowserPackagePlan:
     python_source: str
     requested_packages: list[str] = field(default_factory=list)
     imported_modules: list[str] = field(default_factory=list)
+    import_rewrites: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -647,6 +649,10 @@ def create_browser_server(
     return BrowserPLATServer(options, *controller_classes, server_name=server_name, undecorated_mode=undecorated_mode)
 
 
+# Server-style parity alias.
+create_server = create_browser_server
+
+
 def serve_client_side_server(
     server_name: str,
     controllers: list[type[Any]] | tuple[type[Any], ...],
@@ -667,8 +673,13 @@ def serve_client_side_server(
     return definition
 
 
+# Server-style parity alias.
+serve_server = serve_client_side_server
+
+
 def prepare_python_source(source: str) -> BrowserPackagePlan:
     requested_packages: list[str] = []
+    rewrites: list[str] = []
     python_lines: list[str] = []
     for raw_line in source.splitlines():
         stripped = raw_line.strip()
@@ -676,7 +687,10 @@ def prepare_python_source(source: str) -> BrowserPackagePlan:
             package_args = stripped[len("!pip install ") :].strip().split()
             requested_packages.extend(arg for arg in package_args if arg and not arg.startswith("-"))
             continue
-        python_lines.append(raw_line)
+        fixed_line, note = _rewrite_server_side_import_for_browser(raw_line)
+        if note is not None:
+            rewrites.append(note)
+        python_lines.append(fixed_line)
     python_source = "\n".join(python_lines)
     imported_modules = [
         module
@@ -687,7 +701,36 @@ def prepare_python_source(source: str) -> BrowserPackagePlan:
         python_source=python_source,
         requested_packages=dedupe_keep_order(requested_packages),
         imported_modules=dedupe_keep_order(imported_modules),
+        import_rewrites=rewrites,
     )
+
+
+def _rewrite_server_side_import_for_browser(raw_line: str) -> tuple[str, str | None]:
+    """
+    Best-effort autofix for browser runtime code that accidentally imports from `plat`.
+    Rewrites imports to `plat_browser` while preserving alias style where possible.
+    """
+    from_import = re.match(r"^(\s*)from\s+plat\s+import\s+(.+?)\s*$", raw_line)
+    if from_import:
+        indent = from_import.group(1)
+        names = from_import.group(2)
+        fixed = f"{indent}from plat_browser import {names}"
+        return fixed, "rewrote: from plat import ... -> from plat_browser import ..."
+
+    import_alias = re.match(r"^(\s*)import\s+plat\s+as\s+([A-Za-z_][A-Za-z0-9_]*)\s*$", raw_line)
+    if import_alias:
+        indent = import_alias.group(1)
+        alias = import_alias.group(2)
+        fixed = f"{indent}import plat_browser as {alias}"
+        return fixed, "rewrote: import plat as ... -> import plat_browser as ..."
+
+    import_plain = re.match(r"^(\s*)import\s+plat\s*$", raw_line)
+    if import_plain:
+        indent = import_plain.group(1)
+        fixed = f"{indent}import plat_browser as plat"
+        return fixed, "rewrote: import plat -> import plat_browser as plat"
+
+    return raw_line, None
 
 
 def detect_imports(source: str) -> list[str]:

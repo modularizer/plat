@@ -787,6 +787,7 @@ export async function createClientSideServerMQTTWebRTCPeerSession(
   const pendingCandidates: RTCIceCandidateInit[] = []
   const expectedIdentity = await resolveExpectedServerIdentity(address.serverName, options.identity)
   let open = true
+  let answerApplied = false
   let serverIdentity: ClientSideServerPublicIdentity | undefined
 
   await subscribe(mqtt, topic)
@@ -798,6 +799,8 @@ export async function createClientSideServerMQTTWebRTCPeerSession(
     }
 
     if (message.kind === 'answer' && message.description) {
+      if (answerApplied) return
+      answerApplied = true
       await verifyServerIdentityForAnswer({
         serverName: address.serverName,
         connectionId,

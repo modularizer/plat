@@ -617,6 +617,81 @@ That makes plat especially interesting for:
 - browser-hosted local APIs
 - weird protocol experiments
 
+## 📁 Static file serving
+
+plat can serve static files from any controller using `StaticFolder` (for directories) and `FileResponse` (for single files). Both are automatically excluded from OpenAPI.
+
+```ts
+import { Controller, GET } from "plat"
+import { StaticFolder, FileResponse } from "@modularizer/plat/static"
+
+@Controller()
+class MyApp {
+  // Serve a directory — variable name becomes the URL prefix
+  // GET /assets/css/style.css, GET /assets/js/app.js, etc.
+  assets = new StaticFolder('./public', {
+    exclude: ['**/*.map', '.DS_Store'],
+    index: 'index.html',
+    maxAge: 3600,
+  })
+
+  // Serve from root URL — lowest priority, acts as SPA fallback
+  root = new StaticFolder('./dist')
+
+  // Serve a single file
+  @GET({ hidden: true })
+  favicon(): FileResponse {
+    return FileResponse.from('./public/favicon.ico')
+  }
+
+  // Dynamic file generation — same return type
+  @GET({ hidden: true })
+  exportCsv({ reportId }: { reportId: string }): FileResponse {
+    const csv = generateReport(reportId)
+    return FileResponse.from(csv, `report-${reportId}.csv`)
+  }
+
+  // Regular API methods coexist normally
+  @GET()
+  getStatus() {
+    return { ok: true }
+  }
+}
+```
+
+### Key features
+
+- **Multipart paths**: `GET /assets/css/style.css` works (exception to plat's flat routing)
+- **Stem matching**: `GET /assets/readme` serves `readme.md` if it's the only `readme.*`
+- **Exclude globs**: gitignore-style patterns (`**/*.map`, `secrets/**`, `**/.*`)
+- **Content-type detection**: auto-detected from filename extension
+- **`onDirectory`**: control what happens at directory root — `'none'`, `'index'`, `'list'`, `'directory'`, or a custom function
+- **VirtualFileSystem**: serve from filesystem, in-memory maps, or any custom backend (S3, database, etc.)
+
+### Client-side servers
+
+Client-side servers use in-memory file maps instead of filesystem paths:
+
+```ts
+@Controller()
+class MyApp {
+  assets = new StaticFolder({
+    'index.html': '<html>...</html>',
+    'css/style.css': 'body { margin: 0 }',
+    'js/app.js': bundledCode,
+  }, { index: 'index.html' })
+}
+```
+
+Custom backends implement the `VirtualFileSystem` interface (`list()` + `read()`):
+
+```ts
+uploads = new StaticFolder({
+  async list(path) { return db.listFiles(path) },
+  async read(path) { return db.readFile(path) },
+})
+```
+
 ## 🛣️ Direction
 
 plat is actively moving toward:

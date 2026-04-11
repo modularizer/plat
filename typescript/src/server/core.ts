@@ -4,6 +4,7 @@ import { ensureControllerMeta, ensureRouteMeta, getControllerMeta, pendingRoutes
 import type { ControllerMeta, RouteMeta } from '../types/endpoints'
 import type { PLATServerResolvedOperation } from './transports'
 import { PLATOperationRegistry } from './operation-registry'
+import { isStaticFolder, type StaticFolder } from '../static/static-folder'
 
 interface PLATServerCoreOptions {
   undecoratedMode?: 'GET' | 'POST' | 'private'
@@ -12,12 +13,19 @@ interface PLATServerCoreOptions {
   validateRouteOpts?: (opts: Record<string, any>, methodName: string, path: string) => void | Promise<void>
 }
 
+export interface RegisteredStaticFolder {
+  name: string
+  folder: StaticFolder
+  controllerTag: string
+}
+
 interface PLATServerCoreStores {
   routes: Array<{ method: string; path: string; methodName?: string }>
   tools: Map<string, any>
   operationRegistry: PLATOperationRegistry
   registeredMethodNames: Set<string>
   registeredControllerNames: Set<string>
+  staticFolders: RegisteredStaticFolder[]
 }
 
 export interface RegisteredControllerOperation {
@@ -60,6 +68,9 @@ export class PLATServerCore {
         )
       }
       this.stores.registeredControllerNames.add(controllerTag)
+
+      // Scan instance properties for StaticFolder class variables
+      this.collectStaticFolders(instance, controllerTag)
 
       this.processPendingRoutes(ControllerClass)
       const freshMeta = getControllerMeta(ControllerClass as Function)
@@ -229,6 +240,30 @@ export class PLATServerCore {
       }
     }
     return methodName.length > 0 ? methodName : null
+  }
+
+  private collectStaticFolders(instance: any, controllerTag: string): void {
+    for (const key of Object.keys(instance)) {
+      const value = instance[key]
+      if (!isStaticFolder(value)) continue
+
+      // Static folder names must not collide with method names or controller names
+      if (this.stores.registeredMethodNames.has(key)) {
+        throw new Error(
+          `StaticFolder '${key}' in ${controllerTag} conflicts with an existing method name. ` +
+          `StaticFolder property names must be globally unique.`
+        )
+      }
+      if (this.stores.registeredControllerNames.has(key)) {
+        throw new Error(
+          `StaticFolder '${key}' in ${controllerTag} conflicts with a controller name. ` +
+          `StaticFolder property names must not overlap with controller names.`
+        )
+      }
+
+      this.stores.registeredMethodNames.add(key)
+      this.stores.staticFolders.push({ name: key, folder: value, controllerTag })
+    }
   }
 
   private validateMethodName(methodName: string, controllerName: string): void {

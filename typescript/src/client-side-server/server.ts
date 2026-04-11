@@ -1,6 +1,7 @@
 import { normalizeParameters } from '../server/param-aliases'
-import { PLATServerCore } from '../server/core'
+import { PLATServerCore, type RegisteredStaticFolder } from '../server/core'
 import { PLATOperationRegistry } from '../server/operation-registry'
+import { isFileResponse, type FileResponse } from '../static/file-response'
 import {
   HttpError,
   type AuthMode,
@@ -100,6 +101,7 @@ export class PLATClientSideServer {
   private operationRegistry = new PLATOperationRegistry()
   private registeredMethodNames = new Set<string>()
   private registeredControllerNames = new Set<string>()
+  private staticFolders: RegisteredStaticFolder[] = []
   private core: PLATServerCore
   private openapiCache?: Record<string, any>
   private logger: Logger
@@ -133,6 +135,7 @@ export class PLATClientSideServer {
       operationRegistry: this.operationRegistry,
       registeredMethodNames: this.registeredMethodNames,
       registeredControllerNames: this.registeredControllerNames,
+      staticFolders: this.staticFolders,
     })
 
     if (ControllerClasses.length > 0) {
@@ -236,6 +239,29 @@ export class PLATClientSideServer {
       return
     }
 
+    if (message.method.toUpperCase() === 'GET' && message.path === '/__plat/static-manifest') {
+      await channel.send({
+        jsonrpc: '2.0',
+        id: message.id,
+        ok: true,
+        result: await this.buildStaticManifest(),
+      })
+      return
+    }
+
+    // Try static folder resolution before operation lookup
+    if (message.method.toUpperCase() === 'GET') {
+      const staticResult = await this.resolveStaticFolder(message.path)
+      if (staticResult !== undefined) {
+        if (staticResult === null) {
+          await channel.send({ jsonrpc: '2.0', id: message.id, ok: false, error: { status: 404, message: 'Not found' } })
+        } else {
+          await channel.send({ jsonrpc: '2.0', id: message.id, ok: true, result: await this.serializeFileResponse(staticResult) })
+        }
+        return
+      }
+    }
+
     const operation = this.operationRegistry.resolve({
       operationId: message.operationId,
       method: message.method,
@@ -257,12 +283,21 @@ export class PLATClientSideServer {
 
     try {
       const result = await this.executeOperation(operation, message, channel)
-      await channel.send({
-        jsonrpc: '2.0',
-        id: message.id,
-        ok: true,
-        result: this.serializeValue(result),
-      })
+      if (isFileResponse(result)) {
+        await channel.send({
+          jsonrpc: '2.0',
+          id: message.id,
+          ok: true,
+          result: await this.serializeFileResponse(result),
+        })
+      } else {
+        await channel.send({
+          jsonrpc: '2.0',
+          id: message.id,
+          ok: true,
+          result: this.serializeValue(result),
+        })
+      }
     } catch (error: any) {
       this.logger.error(`[ClientSideServer Error] ${error?.message ?? 'Internal client-side server error'}`, error)
       const status = error instanceof HttpError ? error.statusCode : 500
@@ -543,10 +578,75 @@ export class PLATClientSideServer {
     return value
   }
 
+  /**
+   * Build a manifest of all file paths available from registered static folders.
+   * Returns paths prefixed with their folder mount point (e.g. /assets/logo.png, /index.html).
+   */
+  private async buildStaticManifest(): Promise<{ folders: { name: string; paths: string[] }[]; allPaths: string[] }> {
+    const folders: { name: string; paths: string[] }[] = []
+    const allPaths: string[] = []
+    for (const sf of this.staticFolders) {
+      let filePaths: string[]
+      try {
+        filePaths = await sf.folder.listAllFiles()
+      } catch {
+        filePaths = []
+      }
+      const prefixed = sf.name === 'root'
+        ? filePaths.map(p => '/' + p)
+        : filePaths.map(p => '/' + sf.name + '/' + p)
+      folders.push({ name: sf.name, paths: prefixed })
+      allPaths.push(...prefixed)
+    }
+    return { folders, allPaths }
+  }
+
+  /**
+   * Try to resolve a request path against registered static folders.
+   * Returns FileResponse if matched, null if matched but file not found, undefined if no folder matched.
+   */
+  private async resolveStaticFolder(path: string): Promise<FileResponse | null | undefined> {
+    const normalized = path.replace(/^\//, '')
+
+    // Check named folders first (e.g. /assets/...)
+    for (const sf of this.staticFolders) {
+      if (sf.name === 'root') continue
+      const prefix = sf.name + '/'
+      if (normalized === sf.name || normalized.startsWith(prefix)) {
+        const subPath = normalized === sf.name ? '' : normalized.slice(prefix.length)
+        const result = await sf.folder.resolve(subPath)
+        return result // FileResponse or null
+      }
+    }
+
+    // Check root folder last (lowest priority)
+    for (const sf of this.staticFolders) {
+      if (sf.name !== 'root') continue
+      const result = await sf.folder.resolve(normalized)
+      if (result) return result
+    }
+
+    return undefined // No static folder matched this path
+  }
+
+  private async serializeFileResponse(fileResponse: FileResponse): Promise<Record<string, any>> {
+    const content = await fileResponse.getContent()
+    const bytes = typeof content === 'string' ? new TextEncoder().encode(content) : content
+    return {
+      _type: 'file',
+      filename: fileResponse.filename,
+      contentType: fileResponse.contentType,
+      content: bytes,
+      contentEncoding: 'binary',
+      headers: fileResponse.headers,
+    }
+  }
+
   private generateOpenAPISpec(): Record<string, any> {
     const paths: Record<string, any> = {}
 
     for (const tool of this.toolsStore.values()) {
+      if ((tool as any).hidden) continue
       const method = tool.method.toLowerCase()
       const path = tool.path
       const operation: Record<string, any> = {
@@ -608,6 +708,12 @@ export function createClientSideServer(
 ): PLATClientSideServer {
   return new PLATClientSideServer(options, ...ControllerClasses)
 }
+
+/**
+ * Server-style alias for client-side server creation.
+ * Mirrors `createServer(...)` naming from the Node server API.
+ */
+export const createServer = createClientSideServer
 
 /** Stable JSON stringify with sorted keys — ensures same spec always produces same hash. */
 function cssStableStringify(value: unknown): string {

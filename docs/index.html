@@ -1035,6 +1035,28 @@ export default serveClientSideServer("browser-math", [DemoApi])</div>
                 </div>
               </div>
               <div class="output-item">
+                <input class="output-toggle" type="radio" name="server-output" id="server-output-static" />
+                <label class="output-summary" for="server-output-static"><span class="output-label">Static files</span><span class="output-hint">StaticFolder + FileResponse</span></label>
+                <div class="output-body">
+                  <p>Serve static files alongside your API methods. Use <span class="mono">StaticFolder</span> as a class variable to serve a directory, or return <span class="mono">FileResponse</span> from any method. Both are automatically excluded from OpenAPI.</p>
+                  <div class="output-code mono">import { StaticFolder, FileResponse } from "@modularizer/plat/static"
+
+@Controller()
+class MyApp {
+  assets = new StaticFolder('./public', {
+    exclude: ['**/*.map'],
+    index: 'index.html',
+  })
+
+  @GET({ hidden: true })
+  favicon(): FileResponse {
+    return FileResponse.from('./public/favicon.ico')
+  }
+}</div>
+                  <p>Supports multipart paths, stem matching, gitignore-style excludes, in-memory file maps for client-side servers, and custom virtual file system backends.</p>
+                </div>
+              </div>
+              <div class="output-item">
                 <input class="output-toggle" type="radio" name="server-output" id="server-output-more" />
                 <label class="output-summary" for="server-output-more"><span class="output-label">More to come</span><span class="output-hint">Extensible</span></label>
                 <div class="output-body">
@@ -1527,6 +1549,24 @@ tools = client.tools
               <li>logs</li>
               <li>chunks/messages</li>
               <li>deferred handles and cancellation</li>
+            </ul>
+          </div>
+        </details>
+        <details>
+          <summary>Can plat serve static files too?</summary>
+          <div class="details-body">
+            <p>Yes. Use <span class="mono">StaticFolder</span> as a class variable on any controller to serve a directory of files, or return <span class="mono">FileResponse</span> from a method for single or dynamic files.</p>
+            <div class="code mono">assets = new StaticFolder('./public', { index: 'index.html' })
+
+root = new StaticFolder('./dist') // serves from /</div>
+            <ul>
+              <li>variable name becomes the URL prefix (<span class="mono">/assets/css/style.css</span>)</li>
+              <li><span class="mono">root</span> serves from <span class="mono">/</span> as a fallback, great for SPAs</li>
+              <li>gitignore-style exclude globs (<span class="mono">**/*.map</span>, <span class="mono">secrets/**</span>)</li>
+              <li>stem matching: <span class="mono">/readme</span> finds <span class="mono">readme.md</span> if unambiguous</li>
+              <li>auto content-type detection from file extension</li>
+              <li>works on all server types, including client-side servers with in-memory file maps</li>
+              <li>static routes are automatically excluded from OpenAPI</li>
             </ul>
           </div>
         </details>

@@ -99,10 +99,12 @@ export async function runClientSideServer(
   const { transpile: customTranspile, analyzeSource: customAnalyze, ...rest } = options
   const undecoratedMode = rest.undecoratedMode ?? 'POST'
   const entryPoint = (options as any).sourceEntryPoint
+  const normalizedSource = normalizeClientSideSourceImports(source)
 
   const defaultTranspile = (src: string | Record<string, string>, ep?: string): string => {
-    if (typeof src === 'string') {
-      return ts.transpileModule(src, {
+    const normalized = normalizeClientSideSourceImports(src)
+    if (typeof normalized === 'string') {
+      return ts.transpileModule(normalized, {
         compilerOptions: {
           module: ts.ModuleKind.ESNext,
           target: ts.ScriptTarget.ES2022,
@@ -110,19 +112,20 @@ export async function runClientSideServer(
         },
       }).outputText
     }
-    return transpileMultipleFiles(src, ts, ep)
+    return transpileMultipleFiles(normalized, ts, ep)
   }
 
   const defaultAnalyze = (src: string | Record<string, string>, ep?: string): ClientSideServerSourceAnalysis => {
-    if (typeof src === 'string') {
-      return analyzeClientSideServerSource(ts as unknown as TypeScriptLike, src, { undecoratedMode })
+    const normalized = normalizeClientSideSourceImports(src)
+    if (typeof normalized === 'string') {
+      return analyzeClientSideServerSource(ts as unknown as TypeScriptLike, normalized, { undecoratedMode })
     }
-    return analyzeClientSideServerMultipleFiles(ts as unknown as TypeScriptLike, src, { undecoratedMode, entryPoint: ep })
+    return analyzeClientSideServerMultipleFiles(ts as unknown as TypeScriptLike, normalized, { undecoratedMode, entryPoint: ep })
   }
 
   return startClientSideServerFromSource({
     ...rest,
-    source,
+    source: normalizedSource,
     sourceEntryPoint: entryPoint,
     transpile: customTranspile ?? defaultTranspile,
     analyzeSource: customAnalyze ?? defaultAnalyze,
@@ -149,18 +152,19 @@ function transpileSource(source: string | Record<string, string>, entryPoint?: s
 export async function startClientSideServerFromSource(
   options: StartClientSideServerFromSourceOptions,
 ): Promise<StartedClientSideServer> {
+  const normalizedSource = normalizeClientSideSourceImports(options.source)
   const compiled = await (options.transpile
-    ? options.transpile(options.source, options.sourceEntryPoint)
-    : Promise.resolve(transpileSource(options.source, options.sourceEntryPoint)))
+    ? options.transpile(normalizedSource, options.sourceEntryPoint)
+    : Promise.resolve(transpileSource(normalizedSource, options.sourceEntryPoint)))
 
   const analysis = await (options.analyzeSource
-    ? options.analyzeSource(options.source, options.sourceEntryPoint)
+    ? options.analyzeSource(normalizedSource, options.sourceEntryPoint)
     : Promise.resolve(
-        typeof options.source === 'string'
-          ? analyzeClientSideServerSource(ts as unknown as TypeScriptLike, options.source, {
+        typeof normalizedSource === 'string'
+          ? analyzeClientSideServerSource(ts as unknown as TypeScriptLike, normalizedSource, {
               undecoratedMode: options.undecoratedMode ?? 'POST',
             })
-          : analyzeClientSideServerMultipleFiles(ts as unknown as TypeScriptLike, options.source, {
+          : analyzeClientSideServerMultipleFiles(ts as unknown as TypeScriptLike, normalizedSource, {
               undecoratedMode: options.undecoratedMode ?? 'POST',
               entryPoint: options.sourceEntryPoint,
             }),
@@ -226,12 +230,27 @@ export async function startClientSideServerFromSource(
   }
 }
 
+function normalizeClientSideSourceImports(source: string | Record<string, string>): string | Record<string, string> {
+  const rewrite = (value: string): string => value
+    // Browser runtime expects plat-client package specifiers for blob-module execution.
+    .replaceAll('@modularizer/plat/', '@modularizer/plat-client/')
+    // Legacy short static alias often pasted from old docs/snippets.
+    .replaceAll('"plat/static"', '"@modularizer/plat-client/static"')
+    .replaceAll("'plat/static'", "'@modularizer/plat-client/static'")
+
+  if (typeof source === 'string') return rewrite(source)
+  return Object.fromEntries(Object.entries(source).map(([k, v]) => [k, rewrite(v)]))
+}
+
 export function serveClientSideServer(
   serverName: string,
   controllers: ControllerClass[],
 ): ClientSideServerDefinition {
   return { serverName, controllers }
 }
+
+/** Server-style alias for defining a client-side server module. */
+export const serveServer = serveClientSideServer
 
 
 export interface ConnectClientSideServerOptions extends ClientSideServerMQTTWebRTCOptions {
@@ -252,6 +271,15 @@ export async function connectClientSideServer(
   })
   return { client, openapi }
 }
+
+/** Server-style alias for connecting to a server endpoint (css:// or http(s)://). */
+export const connectServer = connectClientSideServer
+
+/**
+ * Server-style alias for starting a client-side server from source.
+ * Mirrors the common `startServer(...)` naming across runtimes.
+ */
+export const startServer = runClientSideServer
 
 export interface RetryLoopOptions {
   initialDelayMs?: number

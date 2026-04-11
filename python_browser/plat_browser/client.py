@@ -52,6 +52,10 @@ async def connect_client_side_server(base_url: str, options: Any = None) -> Brow
     )
 
 
+# Server-style parity alias.
+connect_server = connect_client_side_server
+
+
 async def run_python_client_source(source: str) -> Any:
     namespace = {
         "__name__": "__plat_browser_client__",

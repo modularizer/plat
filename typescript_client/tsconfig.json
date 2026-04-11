@@ -50,7 +50,8 @@
     "../typescript/src/server/authority-server.ts",
     "../typescript/src/server/cache/**/*",
     "../typescript/src/server/rate-limit/**/*",
-    "../typescript/src/server/token-limit/**/*"
+    "../typescript/src/server/token-limit/**/*",
+    "../typescript/src/static/**/*"
   ],
 
   "exclude": [

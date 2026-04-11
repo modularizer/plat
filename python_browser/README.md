@@ -7,7 +7,7 @@ This package is intended for client-side Python execution environments while kee
 ## Example
 
 ```python
-from plat_browser import Controller, POST, serve_client_side_server
+from plat_browser import Controller, POST, serve_server
 
 
 @Controller()
@@ -17,7 +17,7 @@ class MathApi:
         return a + b
 
 
-serve_client_side_server("browser-python-math", [MathApi])
+serve_server("browser-python-math", [MathApi])
 ```
 
 It also supports hidden browser package installation syntax:
@@ -33,16 +33,16 @@ Payload fields are passed into handlers as keyword arguments by default, so brow
 Browser Python can also act as a client:
 
 ```python
-from plat_browser import connect_client_side_server
+from plat_browser import connect_server
 
-client = await connect_client_side_server("css://browser-python-math")
+client = await connect_server("css://browser-python-math")
 await client.add(a=20, b=22)
 ```
 
 Browser Python clients can also pass optional trust inputs:
 
 ```python
-client = await connect_client_side_server(
+client = await connect_server(
     "css://browser-python-math",
     {
         "identity": {
@@ -61,9 +61,9 @@ client = await connect_client_side_server(
 That same client helper can also connect to normal HTTP servers that expose OpenAPI:
 
 ```python
-from plat_browser import connect_client_side_server
+from plat_browser import connect_server
 
-client = await connect_client_side_server("https://api.example.com")
+client = await connect_server("https://api.example.com")
 await client.createOrder(itemId="sku_123", qty=2)
 ```
 

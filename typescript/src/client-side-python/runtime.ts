@@ -35,6 +35,7 @@ interface PythonPreparedPlan {
   python_source: string
   requested_packages: string[]
   imported_modules: string[]
+  import_rewrites?: string[]
 }
 
 interface PythonServerStartResult {
@@ -457,7 +458,7 @@ def __plat_browser_start_server(source):
         or module_globals.get("default")
     )
     if definition is None:
-        raise RuntimeError("Expected the source to call serve_client_side_server(name, [Controller])")
+        raise RuntimeError("Expected the source to call serve_server(name, [Controller]) or serve_client_side_server(name, [Controller])")
     server = create_browser_server(
         definition.options,
         *definition.controllers,
@@ -481,6 +482,7 @@ def __plat_browser_prepare_source(source):
         "python_source": plan.python_source,
         "requested_packages": plan.requested_packages,
         "imported_modules": plan.imported_modules,
+        "import_rewrites": plan.import_rewrites,
     }
 
 async def __plat_browser_run_client_source(source):
@@ -492,6 +494,7 @@ async def __plat_browser_run_client_source(source):
 
   async startServer(source: string): Promise<PythonServerStartResult> {
     const plan = await this.prepareSource(source)
+    this.logPlanRewrites(plan)
     await this.installPackages(plan)
     const result = await this.callPythonFunction<PythonServerStartResult>(
       '__plat_browser_start_server',
@@ -506,6 +509,7 @@ async def __plat_browser_run_client_source(source):
 
   async runClientSource(source: string): Promise<unknown> {
     const plan = await this.prepareSource(source)
+    this.logPlanRewrites(plan)
     await this.installPackages(plan)
     return this.callPythonFunction('__plat_browser_run_client_source', plan.python_source)
   }
@@ -529,6 +533,13 @@ async def __plat_browser_run_client_source(source):
       '__plat_browser_prepare_source',
       source,
     )
+  }
+
+  private logPlanRewrites(plan: PythonPreparedPlan): void {
+    const rewrites = plan.import_rewrites ?? []
+    for (const rewrite of rewrites) {
+      console.warn(`[plat/python-browser] ${rewrite}`)
+    }
   }
 
   private async installPackages(plan: PythonPreparedPlan): Promise<void> {

@@ -32,6 +32,10 @@
     "./python-browser": {
       "import": "./dist/python-browser-entry.js",
       "types": "./dist/python-browser-entry.d.ts"
+    },
+    "./static": {
+      "import": "./dist/static/index.js",
+      "types": "./dist/static/index.d.ts"
     }
   },
   "files": [

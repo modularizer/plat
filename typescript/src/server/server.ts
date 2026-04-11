@@ -22,8 +22,9 @@ import type { PLATServerHostContext, PLATServerTransportRuntime } from './protoc
 import { createRpcProtocolPlugin, type RpcProtocolPluginOptions } from './rpc-protocol-plugin'
 import { createFileQueueProtocolPlugin } from './file-queue-protocol-plugin'
 import { PLATOperationRegistry } from './operation-registry'
-import { PLATServerCore } from './core'
+import { PLATServerCore, type RegisteredStaticFolder } from './core'
 import { createAuthorityServerController } from './authority-server'
+import { isFileResponse, type FileResponse } from '../static/file-response'
 
 interface OperationExecutionResult {
     kind: 'success' | 'help'
@@ -42,6 +43,8 @@ export class PLATServer {
     private registeredControllerNames = new Set<string>()
     private tools: Map<string, any> = new Map() // methodName -> ToolDefinition
     private operationRegistry = new PLATOperationRegistry()
+    private staticFolders: RegisteredStaticFolder[] = []
+    private pendingRootFolder?: RegisteredStaticFolder
     private core: PLATServerCore
 
     constructor(options: PLATServerOptions = {}, ...ControllerClasses: (new () => any)[]) {
@@ -62,6 +65,7 @@ export class PLATServer {
             operationRegistry: this.operationRegistry,
             registeredMethodNames: this.registeredMethodNames,
             registeredControllerNames: this.registeredControllerNames,
+            staticFolders: this.staticFolders,
         })
 
         // Filter out identity mappings from paramCoercions (where key === value)
@@ -581,7 +585,9 @@ export class PLATServer {
                         this.applyResponseHeaders(res, ctx)
 
                         if (!res.headersSent) {
-                            if (execution.kind === 'help') {
+                            if (isFileResponse(execution.result)) {
+                                this.sendFileResponse(res, execution.result)
+                            } else if (execution.kind === 'help') {
                                 res.status(200).json(execution.result)
                             } else if (execution.statusCode === 204 || execution.result === undefined) {
                                 res.status(execution.statusCode === 200 ? 204 : execution.statusCode).end()
@@ -625,6 +631,10 @@ export class PLATServer {
                     this.app[variant.method.toLowerCase() as 'get' | 'post' | 'put' | 'patch' | 'delete'](variant.path, handler)
                 }
         }
+
+        // Register static folder routes (after all API routes for correct priority)
+        this.registerStaticFolderRoutes()
+
         return this
     }
 
@@ -1243,6 +1253,7 @@ export class PLATServer {
         const paths: Record<string, any> = {}
 
         for (const [, tool] of this.tools) {
+            if (tool.hidden) continue
             const method = (tool.method as string).toLowerCase()
             const path = tool.path as string
 
@@ -1366,6 +1377,24 @@ export class PLATServer {
             void plugin.attach?.(transportRuntime, hostContext)
             void plugin.start?.(transportRuntime)
         }
+        // Register root static folder as lowest-priority fallback
+        if (this.pendingRootFolder) {
+            const rootFolder = this.pendingRootFolder
+            this.app.get('*', async (req: Request, res: Response, next: NextFunction) => {
+                const subPath = req.path.replace(/^\//, '')
+                try {
+                    const fileResponse = await rootFolder.folder.resolve(subPath)
+                    if (fileResponse) {
+                        this.sendFileResponse(res, fileResponse)
+                    } else {
+                        next()
+                    }
+                } catch {
+                    next()
+                }
+            })
+        }
+
         server.listen(finalPort, finalHost, wrappedCallback)
         return this
     }
@@ -1379,6 +1408,54 @@ export class PLATServer {
             })
         })
         this.httpServer = undefined
+    }
+
+    private registerStaticFolderRoutes(): void {
+        for (const sf of this.staticFolders) {
+            if (sf.name === 'root') {
+                this.pendingRootFolder = sf
+                continue
+            }
+
+            const prefix = '/' + sf.name
+            const handler = async (req: Request, res: Response) => {
+                const subPath = req.path.slice(prefix.length).replace(/^\//, '')
+                try {
+                    const fileResponse = await sf.folder.resolve(subPath)
+                    if (fileResponse) {
+                        this.sendFileResponse(res, fileResponse)
+                    } else {
+                        res.status(404).json({ error: 'Not found' })
+                    }
+                } catch (err: any) {
+                    this.logger.error(`[StaticFolder Error] ${err?.message}`, err)
+                    res.status(500).json({ error: 'Internal server error' })
+                }
+            }
+            this.app.get(prefix, handler)
+            this.app.get(`${prefix}/*`, handler)
+        }
+    }
+
+    private sendFileResponse(res: Response, fileResponse: FileResponse): void {
+        res.setHeader('Content-Type', fileResponse.contentType)
+        for (const [key, value] of Object.entries(fileResponse.headers)) {
+            res.setHeader(key, value)
+        }
+        if (fileResponse.maxAge !== undefined) {
+            res.setHeader('Cache-Control', `public, max-age=${fileResponse.maxAge}`)
+        }
+        if (fileResponse.kind === 'path') {
+            const path = require('node:path')
+            res.sendFile(path.resolve(fileResponse.source as string))
+        } else {
+            const content = fileResponse.source
+            if (typeof content === 'string') {
+                res.send(content)
+            } else {
+                res.send(Buffer.from(content as Uint8Array))
+            }
+        }
     }
 
     /**

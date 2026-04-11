@@ -21,6 +21,31 @@ export interface ClientSideServerInstanceInfo {
   serverStartedAt?: number
 }
 
+export type ServiceWorkerBridgeBodyEncoding = 'none' | 'base64'
+
+export interface ServiceWorkerBridgeRequestMessage {
+  type: 'PLAT_REQUEST'
+  id: string
+  clientId?: string
+  method: string
+  path: string
+  headers: Record<string, string>
+  bodyEncoding: ServiceWorkerBridgeBodyEncoding
+  body?: string
+}
+
+export interface ServiceWorkerBridgeResponseMessage {
+  type: 'PLAT_RESPONSE'
+  id: string
+  status: number
+  statusText: string
+  headers: Record<string, string>
+  bodyEncoding: ServiceWorkerBridgeBodyEncoding
+  body?: string
+  error?: string
+  errorCode?: 'timeout' | 'no-client' | 'upstream-failed' | 'bad-response'
+}
+
 export interface ClientSideServerRequest {
   jsonrpc: '2.0'
   id: string

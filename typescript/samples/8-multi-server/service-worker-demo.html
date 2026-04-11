@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Plat Service Worker Demo</title>
+    <style>
+      :root {
+        --bg: #eff3ef;
+        --panel: rgba(251, 255, 253, 0.92);
+        --ink: #182122;
+        --muted: #5f7270;
+        --accent: #24695b;
+        --accent-2: #cb5d3c;
+        --border: #c9d8d1;
+        --shadow: 0 18px 38px rgba(27, 73, 63, 0.11);
+        --mono: "SFMono-Regular", "Menlo", "Consolas", monospace;
+        --sans: "Avenir Next", "Segoe UI", sans-serif;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; font-family: var(--sans); color: var(--ink);
+        background: radial-gradient(circle at top right, rgba(36,105,91,0.14), transparent 30%),
+          radial-gradient(circle at bottom left, rgba(203,93,60,0.12), transparent 26%), var(--bg);
+        min-height: 100vh; padding: 18px;
+      }
+      .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 18px; box-shadow: var(--shadow); padding: 18px; margin-bottom: 16px; }
+      h1 { margin: 0 0 4px; font-size: 1.5rem; }
+      h2 { margin: 12px 0 8px; font-size: 0.9rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+      p { margin: 0; color: var(--muted); font-size: 0.9rem; }
+      .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
+      button { border: 0; border-radius: 999px; padding: 9px 16px; background: var(--accent); color: white; font-weight: 700; cursor: pointer; font: inherit; font-size: 0.85rem; }
+      button:disabled { opacity: 0.5; cursor: not-allowed; }
+      button.secondary { background: #dfeae5; color: var(--ink); }
+      .console { min-height: 200px; max-height: 400px; overflow: auto; padding: 12px; border-radius: 12px; font-family: var(--mono); font-size: 11px; white-space: pre-wrap; background: #1d2627; color: #d6ece5; margin-top: 10px; }
+      .meta { color: var(--muted); font-size: 0.85rem; }
+      .meta.ok { color: var(--accent); }
+      .meta.error { color: var(--accent-2); }
+      .code-block { background: #f6fbf8; border: 1px solid var(--border); border-radius: 8px; padding: 12px; font-family: var(--mono); font-size: 0.85rem; overflow-x: auto; margin: 10px 0; }
+      input { border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; background: #fff; color: var(--ink); font: inherit; font-size: 0.85rem; flex: 1; }
+    </style>
+    <script type="importmap">
+      {
+        "imports": {
+          "@modularizer/plat/client-server": "../../dist/client-server-entry.js",
+          "@modularizer/plat-client/client-server": "../../dist/client-server-entry.js",
+          "@modularizer/plat/static": "../../dist/static/index.js",
+          "@modularizer/plat-client/static": "../../dist/static/index.js",
+          "plat/static": "../../dist/static/index.js"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <div class="panel">
+      <h1>⚙️ Plat Service Worker Bridge Demo</h1>
+      <p>This page demonstrates the Service Worker-based HTTP interception—the lowest-level, most foolproof approach to intercepting all requests.</p>
+
+      <h2>Status</h2>
+      <p id="statusText" class="meta">Initializing...</p>
+
+      <h2>Setup</h2>
+      <div class="row">
+        <button id="installBtn">Install Service Worker</button>
+        <button id="uninstallBtn" disabled>Uninstall</button>
+      </div>
+
+      <h2>Test Requests</h2>
+      <div class="row">
+        <button id="fetchBtn" disabled>fetch() Test</button>
+        <button id="xhrBtn" disabled>XHR Test</button>
+        <button id="imgBtn" disabled>Image Test</button>
+        <button id="formBtn" disabled>Form Test</button>
+      </div>
+
+      <h2>Console</h2>
+      <div id="console" class="console">Ready for testing...\n</div>
+    </div>
+
+    <script type="module">
+      import { installServiceWorkerBridge, installServiceWorkerClient, generateServiceWorkerCode } from '@modularizer/plat/client-server'
+
+      const $ = (id) => document.getElementById(id)
+      const consoleEl = $('console')
+      let bridgeHandle = null
+      let clientHandle = null
+
+      function log(msg) {
+        const time = new Date().toLocaleTimeString()
+        consoleEl.textContent += `[${time}] ${msg}\n`
+        consoleEl.scrollTop = consoleEl.scrollHeight
+      }
+
+      function setStatus(msg, ok = true) {
+        const el = $('statusText')
+        el.textContent = msg
+        el.className = ok ? 'meta ok' : 'meta error'
+      }
+
+      // ── Installation ──
+      $('installBtn').addEventListener('click', async () => {
+        try {
+          setStatus('Installing Service Worker...', true)
+          log('Registering Service Worker at /plat-service-worker.js...')
+
+          // Note: In a real setup, you'd need a channel.
+          // For this demo, we'll just register without full bridge integration
+          bridgeHandle = await navigator.serviceWorker.register('/plat-service-worker.js', { scope: '/' })
+          log(`✓ Service Worker registered (${bridgeHandle.controller ? 'active' : 'pending'})`)
+
+          setStatus('Service Worker installed and active!', true)
+          $('installBtn').disabled = true
+          $('uninstallBtn').disabled = false
+          $('fetchBtn').disabled = false
+          $('xhrBtn').disabled = false
+          $('imgBtn').disabled = false
+          $('formBtn').disabled = false
+
+          log('Ready for testing.')
+        } catch (err) {
+          setStatus(`Installation failed: ${err.message}`, false)
+          log(`✗ Error: ${err.message}`)
+        }
+      })
+
+      $('uninstallBtn').addEventListener('click', async () => {
+        try {
+          setStatus('Uninstalling...', true)
+          const registrations = await navigator.serviceWorker.getRegistrations()
+          for (const reg of registrations) {
+            await reg.unregister()
+            log(`✓ Unregistered Service Worker`)
+          }
+          setStatus('Service Worker uninstalled.', true)
+          $('installBtn').disabled = false
+          $('uninstallBtn').disabled = true
+          $('fetchBtn').disabled = true
+          $('xhrBtn').disabled = true
+          $('imgBtn').disabled = true
+          $('formBtn').disabled = true
+        } catch (err) {
+          setStatus(`Uninstall failed: ${err.message}`, false)
+          log(`✗ Error: ${err.message}`)
+        }
+      })
+
+      // ── Test Requests ──
+      $('fetchBtn').addEventListener('click', async () => {
+        try {
+          log('Testing fetch()...')
+          const resp = await fetch('/api/health')
+          const data = await resp.text()
+          log(`✓ fetch: ${resp.status} ${resp.statusText}`)
+          log(`  Response: ${data.slice(0, 100)}`)
+        } catch (err) {
+          log(`✗ fetch failed: ${err.message}`)
+        }
+      })
+
+      $('xhrBtn').addEventListener('click', async () => {
+        try {
+          log('Testing XMLHttpRequest...')
+          const xhr = new XMLHttpRequest()
+          xhr.open('GET', '/api/health')
+          xhr.onload = () => {
+            log(`✓ XHR: ${xhr.status} ${xhr.statusText}`)
+            log(`  Response: ${xhr.responseText.slice(0, 100)}`)
+          }
+          xhr.onerror = () => log(`✗ XHR failed`)
+          xhr.send()
+        } catch (err) {
+          log(`✗ XHR error: ${err.message}`)
+        }
+      })
+
+      $('imgBtn').addEventListener('click', async () => {
+        try {
+          log('Testing resource element (img)...')
+          const img = document.createElement('img')
+          img.src = '/favicon.ico'
+          img.onload = () => log(`✓ Image loaded via Service Worker`)
+          img.onerror = () => log(`✗ Image load failed`)
+          img.style.display = 'none'
+          document.body.appendChild(img)
+        } catch (err) {
+          log(`✗ Image error: ${err.message}`)
+        }
+      })
+
+      $('formBtn').addEventListener('click', async () => {
+        try {
+          log('Testing form submission...')
+          const form = document.createElement('form')
+          form.method = 'POST'
+          form.action = '/api/echo'
+          form.innerHTML = '<input name="test" value="hello">'
+
+          const data = new FormData(form)
+          const resp = await fetch('/api/echo', {
+            method: 'POST',
+            body: data
+          })
+          const text = await resp.text()
+          log(`✓ Form POST: ${resp.status}`)
+          log(`  Response: ${text.slice(0, 100)}`)
+        } catch (err) {
+          log(`✗ Form test failed: ${err.message}`)
+        }
+      })
+
+      // ── Initial state ──
+      log('Service Worker bridge demo loaded.')
+      log('Click "Install Service Worker" to begin.')
+    </script>
+  </body>
+</html>
+

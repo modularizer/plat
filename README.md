@@ -21,6 +21,7 @@ From the same method surface, plat can create:
 - TypeScript / JavaScript client-side proxies
 - Python client-side proxies
 - browser-hosted client-side servers
+- static file serving with `StaticFolder` and `FileResponse` (auto-excluded from OpenAPI)
 
 ## Tiny example
 

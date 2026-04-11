@@ -12,8 +12,12 @@ from plat_browser import (
     POST,
     RouteContext,
     connect_client_side_server,
+    connect_server,
+    create_browser_server,
+    create_server,
     prepare_python_source,
     run_python_client_source,
+    serve_server,
     serve_client_side_server,
 )
 from plat_browser.client import _set_browser_client_bridge
@@ -45,6 +49,27 @@ class PlatBrowserTests(unittest.TestCase):
         self.assertEqual(plan.requested_packages, ["pandas", "fastapi"])
         self.assertEqual(plan.imported_modules, ["pandas", "numpy"])
         self.assertNotIn("!pip install", plan.python_source)
+
+    def test_prepare_python_source_rewrites_accidental_plat_imports(self) -> None:
+        plan = prepare_python_source(
+            textwrap.dedent(
+                """
+                from plat import Controller, POST, serve_client_side_server
+                import plat
+                import plat as platform_api
+                """
+            ).strip()
+        )
+
+        self.assertIn("from plat_browser import Controller, POST, serve_client_side_server", plan.python_source)
+        self.assertIn("import plat_browser as plat", plan.python_source)
+        self.assertIn("import plat_browser as platform_api", plan.python_source)
+        self.assertGreaterEqual(len(plan.import_rewrites), 3)
+
+    def test_parity_aliases_point_to_same_callables(self) -> None:
+        self.assertIs(connect_server, connect_client_side_server)
+        self.assertIs(create_server, create_browser_server)
+        self.assertIs(serve_server, serve_client_side_server)
 
     def test_serve_client_side_server_returns_definition(self) -> None:
         class DemoApi:
