@@ -213,6 +213,13 @@ export async function startClientSideServerFromSource(
     announceIntervalMs: options.announceIntervalMs,
     clientIdPrefix: options.clientIdPrefix,
     identity: options.identity,
+    secureSignaling: options.secureSignaling,
+    anonymousRouting: options.anonymousRouting,
+    sealedTopic: options.sealedTopic,
+    maxSealedMessageBytes: options.maxSealedMessageBytes,
+    replayWindowMs: options.replayWindowMs,
+    clockSkewToleranceMs: options.clockSkewToleranceMs,
+    serverEncryptionKeyPair: options.serverEncryptionKeyPair,
     workerInfo: (options as any).workerInfo,
     instanceInfo: (options as any).instanceInfo,
   })

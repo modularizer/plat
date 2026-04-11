@@ -1,6 +1,15 @@
 import { Controller, GET } from '../spec'
-import type { ClientSideServerExportedKeyPair, ClientSideServerSignedAuthorityRecord, ClientSideServerTrustedServerRecord } from '../client-side-server/identity'
-import { createSignedClientSideServerAuthorityRecord } from '../client-side-server/identity'
+import type {
+  ClientSideServerAnyAuthorityRecord,
+  ClientSideServerAnyTrustedServerRecord,
+  ClientSideServerExportedKeyPair,
+  ClientSideServerSignedAuthorityRecord,
+} from '../client-side-server/identity'
+import {
+  createSignedClientSideServerAuthorityRecord,
+  createSignedClientSideServerAuthorityRecordV2,
+  isClientSideServerTrustedServerRecordV2,
+} from '../client-side-server/identity'
 
 export interface AuthorityHostSummary {
   serverName: string
@@ -19,15 +28,15 @@ export interface AuthorityHostListResponse {
 export interface AuthorityHostExportResponse {
   authorityName?: string
   total: number
-  records: ClientSideServerSignedAuthorityRecord[]
+  records: ClientSideServerAnyAuthorityRecord[]
 }
 
 export interface PLATAuthorityServerOptions {
   authorityName?: string
   authorityKeyPair: ClientSideServerExportedKeyPair
-  knownHosts: Record<string, ClientSideServerTrustedServerRecord | ClientSideServerTrustedServerRecord[]>
+  knownHosts: Record<string, ClientSideServerAnyTrustedServerRecord | ClientSideServerAnyTrustedServerRecord[]>
   allowServerNames?: string[]
-  allow?: (serverName: string, record: ClientSideServerTrustedServerRecord) => boolean
+  allow?: (serverName: string, record: ClientSideServerAnyTrustedServerRecord) => boolean
 }
 
 export function createAuthorityServerController(
@@ -40,27 +49,13 @@ export function createAuthorityServerController(
     @GET()
     async resolveAuthorityHost(
       { serverName }: { serverName: string },
-    ): Promise<ClientSideServerSignedAuthorityRecord | ClientSideServerSignedAuthorityRecord[] | null> {
+    ): Promise<ClientSideServerAnyAuthorityRecord | ClientSideServerAnyAuthorityRecord[] | null> {
       const records = getAuthorityHostRecords(options, serverName)
       if (records.length === 0) return null
       if (records.length === 1) {
-        return createSignedClientSideServerAuthorityRecord(options.authorityKeyPair, {
-          serverName,
-          publicKeyJwk: records[0]!.publicKeyJwk,
-          keyId: records[0]!.keyId,
-          authorityName,
-        })
+        return signAuthorityHostRecord(options, serverName, records[0]!, authorityName)
       }
-      return Promise.all(
-        records.map((record) =>
-          createSignedClientSideServerAuthorityRecord(options.authorityKeyPair, {
-            serverName,
-            publicKeyJwk: record.publicKeyJwk,
-            keyId: record.keyId,
-            authorityName,
-          }),
-        ),
-      )
+      return Promise.all(records.map((record) => signAuthorityHostRecord(options, serverName, record, authorityName)))
     }
 
     @GET()
@@ -73,8 +68,8 @@ export function createAuthorityServerController(
         total: records.length,
         hosts: records.map(([serverName, record]) => ({
           serverName,
-          keyId: record.keyId,
-          fingerprint: record.fingerprint,
+          keyId: isClientSideServerTrustedServerRecordV2(record) ? record.signingKeyId : record.keyId,
+          fingerprint: isClientSideServerTrustedServerRecordV2(record) ? record.signingFingerprint : record.fingerprint,
           source: record.source,
           trustedAt: record.trustedAt,
         })),
@@ -90,12 +85,7 @@ export function createAuthorityServerController(
         authorityName,
         total: records.length,
         records: await Promise.all(
-          records.map(async ([serverName, record]) => createSignedClientSideServerAuthorityRecord(options.authorityKeyPair, {
-            serverName,
-            publicKeyJwk: record.publicKeyJwk,
-            keyId: record.keyId,
-            authorityName,
-          })),
+            records.map(async ([serverName, record]) => signAuthorityHostRecord(options, serverName, record, authorityName)),
         ),
       }
     }
@@ -107,7 +97,7 @@ export function createAuthorityServerController(
 function getAuthorityHostRecords(
   options: PLATAuthorityServerOptions,
   serverName: string,
-): ClientSideServerTrustedServerRecord[] {
+): ClientSideServerAnyTrustedServerRecord[] {
   const entry = options.knownHosts[serverName]
   if (!entry) return []
   if (options.allowServerNames && !options.allowServerNames.includes(serverName)) return []
@@ -118,8 +108,8 @@ function getAuthorityHostRecords(
 function selectAuthorityHostRecords(
   options: PLATAuthorityServerOptions,
   input: { q?: string; limit?: number; offset?: number; serverNames?: string[] },
-): Array<[string, ClientSideServerTrustedServerRecord]> {
-  const pairs: Array<[string, ClientSideServerTrustedServerRecord]> = []
+): Array<[string, ClientSideServerAnyTrustedServerRecord]> {
+  const pairs: Array<[string, ClientSideServerAnyTrustedServerRecord]> = []
   for (const [serverName, entry] of Object.entries(options.knownHosts)) {
     const records = getAuthorityHostRecords(options, serverName)
     for (const record of records) {
@@ -136,3 +126,27 @@ function selectAuthorityHostRecords(
   const limit = Math.max(1, input.limit ?? (filtered.length || 1))
   return filtered.slice(offset, offset + limit)
 }
+
+async function signAuthorityHostRecord(
+  options: PLATAuthorityServerOptions,
+  serverName: string,
+  record: ClientSideServerAnyTrustedServerRecord,
+  authorityName?: string,
+): Promise<ClientSideServerSignedAuthorityRecord | ClientSideServerAnyAuthorityRecord> {
+  return isClientSideServerTrustedServerRecordV2(record)
+    ? createSignedClientSideServerAuthorityRecordV2(options.authorityKeyPair, {
+        serverName,
+        signingPublicKeyJwk: record.signingPublicKeyJwk,
+        encryptionPublicKeyJwk: record.encryptionPublicKeyJwk,
+        signingKeyId: record.signingKeyId,
+        encryptionKeyId: record.encryptionKeyId,
+        authorityName,
+      })
+    : createSignedClientSideServerAuthorityRecord(options.authorityKeyPair, {
+        serverName,
+        publicKeyJwk: record.publicKeyJwk,
+        keyId: record.keyId,
+        authorityName,
+      })
+}
+

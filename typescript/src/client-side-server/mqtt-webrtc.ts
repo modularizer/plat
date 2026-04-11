@@ -5,32 +5,68 @@ import { createRTCDataChannelAdapter, type ClientSideServerChannel } from './cha
 import {
   buildClientSideServerIdentityChallenge,
   clientSideServerPublicKeysEqual,
+  type ClientSideServerAnyAuthorityRecord,
+  type ClientSideServerAnyTrustedServerRecord,
   type ClientSideServerAuthorityServer,
+  type ClientSideServerEncryptionKeyPair,
+  type ClientSideServerEncryptionPublicIdentity,
   type ClientSideServerExportedKeyPair,
   type ClientSideServerPublicIdentity,
   type ClientSideServerSignedAuthorityRecord,
+  type ClientSideServerSignedAuthorityRecordV2,
   type ClientSideServerStorageLike,
   type ClientSideServerTrustedServerRecord,
+  generateClientSideServerEncryptionKeyPair,
   getOrCreateClientSideServerIdentityKeyPair,
+  isClientSideServerSignedAuthorityRecordV2,
+  isClientSideServerTrustedServerRecordV2,
   loadTrustedClientSideServerRecordFromMap,
   resolveTrustedClientSideServerFromAuthorities,
   loadTrustedClientSideServerRecord,
   trustClientSideServerFromAuthorityRecord,
   saveTrustedClientSideServerRecordToMap,
   signClientSideServerChallenge,
+  toClientSideServerEncryptionPublicIdentity,
   toClientSideServerPublicIdentity,
+  trustedClientSideServerRecordToResolvedIdentityBundle,
   trustClientSideServerOnFirstUse,
   verifyClientSideServerChallenge,
+  verifyAnySignedClientSideServerAuthorityRecord,
   verifySignedClientSideServerAuthorityRecord,
 } from './identity'
 import {
+  isClientSideServerSealedEnvelope,
+  isClientSideServerSealedPayload,
   isClientSideServerPeerMessage,
+  type ClientSideServerSealedAnswerPayload,
+  type ClientSideServerSealedEnvelope,
+  type ClientSideServerSealedIcePayload,
+  type ClientSideServerSealedPayload,
+  type ClientSideServerSealedRejectPayload,
   type ClientSideServerInstanceInfo,
   type ClientSideServerMessage,
   type ClientSideServerPeerMessage,
   type ClientSideServerPingMessage,
   type ClientSideServerPrivateChallengeRequest,
 } from './protocol'
+import {
+  choosePaddingBucket,
+  computeSessionId,
+  decodeBase64Url,
+  decryptJsonAead,
+  deriveAeadKeyFromX25519,
+  encodeBase64Url,
+  encryptJsonAead,
+  generateEphemeralX25519KeyPair,
+  importX25519PrivateKeyJwk,
+  importX25519PublicKeyJwk,
+  padCiphertext,
+  randomNonce12,
+  stableJson,
+  unpadCiphertext,
+  utf8,
+  type PlatEphemeralKeyPair,
+} from './secure-crypto'
 import {
   parseClientSideServerAddress,
   type ClientSideServerAddress,
@@ -39,6 +75,10 @@ import type { PLATClientSideServer } from './server'
 
 export const DEFAULT_CLIENT_SIDE_SERVER_MQTT_BROKER = 'wss://broker.emqx.io:8084/mqtt'
 export const DEFAULT_CLIENT_SIDE_SERVER_MQTT_TOPIC = 'mrtchat/plat-css'
+export const DEFAULT_CLIENT_SIDE_SERVER_SEALED_TOPIC = 'plat'
+export const DEFAULT_CLIENT_SIDE_SERVER_MAX_SEALED_MESSAGE_BYTES = 65536
+export const DEFAULT_CLIENT_SIDE_SERVER_REPLAY_WINDOW_MS = 5 * 60_000
+export const DEFAULT_CLIENT_SIDE_SERVER_CLOCK_SKEW_TOLERANCE_MS = 30_000
 export const DEFAULT_CLIENT_SIDE_SERVER_ICE_SERVERS: RTCIceServer[] = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
@@ -70,7 +110,12 @@ interface ClientSideServerSignalingMessageBase {
   description?: RTCSessionDescriptionInit
   candidate?: RTCIceCandidateInit
   identity?: ClientSideServerPublicIdentity
-  authorityRecord?: ClientSideServerSignedAuthorityRecord
+  authorityRecord?: ClientSideServerAnyAuthorityRecord
+  encryptionIdentity?: ClientSideServerEncryptionPublicIdentity
+  requestEncryptionIdentity?: boolean
+  bootstrapClientEphemeralPublicKeyJwk?: JsonWebKey
+  encryptionChallengeCiphertext?: string
+  encryptionChallengeNonce?: string
   challengeNonce?: string
   challengeSignature?: string
   workerInfo?: ClientSideServerWorkerInfo
@@ -99,7 +144,7 @@ export interface ClientSideServerDiscoveryCandidate {
   instanceId: string
   serverName: string
   identity: ClientSideServerPublicIdentity
-  authorityRecord?: ClientSideServerSignedAuthorityRecord
+  authorityRecord?: ClientSideServerAnyAuthorityRecord
   mqttChallengeVerified: boolean
   workerInfo: ClientSideServerWorkerInfo
   instanceInfo?: ClientSideServerInstanceInfo
@@ -117,7 +162,7 @@ export interface ClientSideServerWorkerState {
   instanceId: string
   session: ClientSideServerPeerSession
   identity: ClientSideServerPublicIdentity
-  authorityRecord?: ClientSideServerSignedAuthorityRecord
+  authorityRecord?: ClientSideServerAnyAuthorityRecord
   status: 'connecting' | 'verifying' | 'active' | 'standby' | 'draining' | 'failed' | 'closed'
   weight: number
   serverAdvertisedWeight: number
@@ -142,6 +187,20 @@ export interface ClientSideServerMQTTWebRTCOptions {
   identity?: ClientSideServerIdentityOptions
   workerPool?: ClientSideServerWorkerPoolOptions
   requirePrivateChallenge?: boolean
+  secureSignaling?: boolean
+  anonymousRouting?: boolean
+  sealedTopic?: string
+  maxSealedMessageBytes?: number
+  replayWindowMs?: number
+  clockSkewToleranceMs?: number
+  serverEncryptionKeyPair?: ClientSideServerEncryptionKeyPair
+  signalingAuth?: {
+    required?: boolean
+    verify?: (
+      credentials: { username: string; password: string },
+      context: { serverName: string; connectionId: string; senderId: string },
+    ) => Promise<boolean> | boolean
+  }
 }
 
 export interface ClientSideServerMQTTWebRTCServerOptions extends ClientSideServerMQTTWebRTCOptions {
@@ -160,7 +219,7 @@ export interface ClientSideServerIdentityOptions {
   keyPair?: ClientSideServerExportedKeyPair
   storage?: ClientSideServerStorageLike
   keyPairStorageKey?: string
-  knownHosts?: Record<string, ClientSideServerTrustedServerRecord>
+  knownHosts?: Record<string, ClientSideServerAnyTrustedServerRecord>
   knownHostsStorage?: ClientSideServerStorageLike
   knownHostsStorageKey?: string
   trustOnFirstUse?: boolean
@@ -169,8 +228,8 @@ export interface ClientSideServerIdentityOptions {
     authorityName?: string
   }
   authorityServers?: ClientSideServerAuthorityServer[]
-  authorityResolver?: (serverName: string) => Promise<ClientSideServerTrustedServerRecord | null>
-  authorityRecord?: ClientSideServerSignedAuthorityRecord
+  authorityResolver?: (serverName: string) => Promise<ClientSideServerAnyTrustedServerRecord | null>
+  authorityRecord?: ClientSideServerAnyAuthorityRecord
 }
 
 export interface ClientSideServerPeerSession extends ClientSideServerChannel {
@@ -182,6 +241,24 @@ export interface ClientSideServerPeerSession extends ClientSideServerChannel {
   isOpen(): boolean
   sendPeer(event: string, data?: unknown): Promise<void>
   subscribePeer(listener: (message: ClientSideServerPeerMessage) => void | Promise<void>): () => void
+}
+
+interface ClientSideServerResolvedExpectedIdentity {
+  trustedRecord: ClientSideServerAnyTrustedServerRecord
+  signing: ClientSideServerPublicIdentity
+  encryption?: ClientSideServerEncryptionPublicIdentity
+}
+
+interface ClientSideServerSealedResponseContext {
+  senderId: string
+  clientEphemeralPublicKeyJwk: JsonWebKey
+  connectionId: string
+}
+
+interface ClientSideServerSecureClientSessionState {
+  keyPair: PlatEphemeralKeyPair
+  serverEncryptionPublicKeyJwk: JsonWebKey
+  serverEncryptionPublicKey: CryptoKey
 }
 
 export interface ClientSideServerPeerPool {
@@ -203,8 +280,11 @@ export class ClientSideServerMQTTWebRTCServer {
   private announceTimer?: ReturnType<typeof setInterval>
   private identityKeyPair?: ClientSideServerExportedKeyPair
   private publicIdentity?: ClientSideServerPublicIdentity
+  private encryptionKeyPair?: ClientSideServerEncryptionKeyPair
+  private encryptionPublicIdentity?: ClientSideServerEncryptionPublicIdentity
   private clientCount = 0
   private resolvedInstanceInfo?: ClientSideServerInstanceInfo
+  private readonly seenSealedNonces = new Map<string, number>()
 
   constructor(private options: ClientSideServerMQTTWebRTCServerOptions) {
     this.serverInstanceId = `${options.serverName}:${randomId('server')}`
@@ -218,11 +298,18 @@ export class ClientSideServerMQTTWebRTCServer {
     if (this.mqtt) return
 
     await this.ensureIdentity()
+    if (isSecureSignalingEnabled(this.options)) {
+      await this.ensureEncryptionIdentity()
+    }
     this.mqtt = await connectToBroker(this.options)
     this.mqtt.on('message', (_topic, payload) => {
       void this.onMessage(payload)
     })
-    await subscribe(this.mqtt, this.options.mqttTopic ?? DEFAULT_CLIENT_SIDE_SERVER_MQTT_TOPIC)
+    await subscribe(this.mqtt, resolvePlaintextTopic(this.options))
+    const sealedTopic = resolveSealedTopic(this.options)
+    if (sealedTopic !== resolvePlaintextTopic(this.options)) {
+      await subscribe(this.mqtt, sealedTopic)
+    }
 
     // Compute and cache instance info (includes openapi hash) before first announce
     this.resolvedInstanceInfo = await this.buildResolvedInstanceInfo()
@@ -259,7 +346,7 @@ export class ClientSideServerMQTTWebRTCServer {
 
   private async announce(): Promise<void> {
     if (!this.mqtt) return
-    await publish(this.mqtt, this.options.mqttTopic ?? DEFAULT_CLIENT_SIDE_SERVER_MQTT_TOPIC, {
+    await publishJson(this.mqtt, resolvePlaintextTopic(this.options), {
       protocol: 'plat-css-v1',
       kind: 'announce',
       senderId: this.serverInstanceId,
@@ -273,37 +360,84 @@ export class ClientSideServerMQTTWebRTCServer {
 
   private async onMessage(payload: Buffer | Uint8Array): Promise<void> {
     const message = parseSignalingMessage(payload)
-    if (!message || message.senderId === this.serverInstanceId) return
-    if (message.targetId && message.targetId !== this.options.serverName && message.targetId !== this.serverInstanceId) return
+    if (message) {
+      if (message.senderId === this.serverInstanceId) return
+      if (message.targetId && message.targetId !== this.options.serverName && message.targetId !== this.serverInstanceId) return
 
-    if (message.kind === 'discover' && message.targetId === this.options.serverName && message.challengeNonce) {
-      await this.respondToDiscover(message)
+      if (message.kind === 'discover' && message.targetId === this.options.serverName && message.challengeNonce) {
+        await this.respondToDiscover(message)
+        return
+      }
+
+      if (!isSecureSignalingEnabled(this.options)) {
+        if (
+          message.kind === 'offer'
+          && (message.targetId === this.options.serverName || message.targetId === this.serverInstanceId)
+          && message.connectionId
+          && message.description
+        ) {
+          await this.acceptOffer(message)
+          return
+        }
+
+        if (
+          message.kind === 'ice'
+          && (message.targetId === this.options.serverName || message.targetId === this.serverInstanceId)
+          && message.connectionId
+          && message.candidate
+        ) {
+          const peer = this.peers.get(message.connectionId)
+          if (peer?.remoteDescription) {
+            await peer.addIceCandidate(new RTCIceCandidate(message.candidate))
+          } else {
+            const pending = this.pendingCandidates.get(message.connectionId) ?? []
+            pending.push(message.candidate)
+            this.pendingCandidates.set(message.connectionId, pending)
+          }
+        }
+      }
       return
     }
 
-    if (
-      message.kind === 'offer'
-      && (message.targetId === this.options.serverName || message.targetId === this.serverInstanceId)
-      && message.connectionId
-      && message.description
-    ) {
-      await this.acceptOffer(message)
+    if (!isSecureSignalingEnabled(this.options)) return
+    const opened = await openClientSideServerSealedEnvelopeForServer({
+      envelopePayload: payload,
+      serverEncryptionKeyPair: this.encryptionKeyPair,
+    })
+    if (!opened || envelopeIsReplayedOrStale(opened.payload, this.options)) return
+    if (this.isSealedReplay(opened.envelope.senderId, opened.envelope.nonce)) {
+      debugSecure('sealed payload replayed', {
+        serverName: this.options.serverName,
+        senderId: opened.envelope.senderId,
+        nonce: opened.envelope.nonce,
+      })
+      return
+    }
+    this.rememberSealedNonce(opened.envelope.senderId, opened.envelope.nonce)
+    debugSecure('sealed payload accepted', {
+      serverName: this.options.serverName,
+      senderId: opened.envelope.senderId,
+      type: opened.payload.type,
+      connectionId: opened.payload.connectionId,
+    })
+
+    if (opened.payload.type === 'offer') {
+      await this.acceptSealedOffer(opened.payload, {
+        senderId: opened.envelope.senderId,
+        clientEphemeralPublicKeyJwk: opened.envelope.clientEphemeralPublicKeyJwk,
+        connectionId: opened.payload.connectionId,
+      })
       return
     }
 
-    if (
-      message.kind === 'ice'
-      && (message.targetId === this.options.serverName || message.targetId === this.serverInstanceId)
-      && message.connectionId
-      && message.candidate
-    ) {
-      const peer = this.peers.get(message.connectionId)
+    if (opened.payload.type === 'ice') {
+      const peer = this.peers.get(opened.payload.connectionId)
       if (peer?.remoteDescription) {
-        await peer.addIceCandidate(new RTCIceCandidate(message.candidate))
+        await peer.addIceCandidate(new RTCIceCandidate(opened.payload.candidate))
       } else {
-        const pending = this.pendingCandidates.get(message.connectionId) ?? []
-        pending.push(message.candidate)
-        this.pendingCandidates.set(message.connectionId, pending)
+        const pending = this.pendingCandidates.get(opened.payload.connectionId) ?? []
+        pending.push(opened.payload.candidate)
+        this.pendingCandidates.set(opened.payload.connectionId, pending)
       }
     }
   }
@@ -312,6 +446,22 @@ export class ClientSideServerMQTTWebRTCServer {
     if (!this.mqtt || !message.challengeNonce) return
     await this.ensureIdentity()
 
+    let encryptionBootstrap: Pick<
+      ClientSideServerSignalingMessage,
+      'encryptionIdentity' | 'encryptionChallengeCiphertext' | 'encryptionChallengeNonce'
+    > = {}
+    if (message.requestEncryptionIdentity && message.bootstrapClientEphemeralPublicKeyJwk) {
+      await this.ensureEncryptionIdentity()
+      encryptionBootstrap = await createPublicEncryptionBootstrapResponse({
+        serverInstanceId: this.serverInstanceId,
+        serverName: this.options.serverName,
+        serverEncryptionKeyPair: this.encryptionKeyPair,
+        serverEncryptionIdentity: this.encryptionPublicIdentity,
+        challengeNonce: message.challengeNonce,
+        clientEphemeralPublicKeyJwk: message.bootstrapClientEphemeralPublicKeyJwk,
+      })
+    }
+
     const challengeString = buildClientSideServerIdentityChallenge({
       serverName: this.options.serverName,
       connectionId: this.serverInstanceId,
@@ -319,13 +469,14 @@ export class ClientSideServerMQTTWebRTCServer {
     })
     const challengeSignature = await signClientSideServerChallenge(this.identityKeyPair!, challengeString)
 
-    await publish(this.mqtt, this.options.mqttTopic ?? DEFAULT_CLIENT_SIDE_SERVER_MQTT_TOPIC, {
+    await publishJson(this.mqtt, resolvePlaintextTopic(this.options), {
       protocol: 'plat-css-v1',
       kind: 'announce',
       senderId: this.serverInstanceId,
       serverName: this.options.serverName,
       identity: this.publicIdentity,
       authorityRecord: this.options.identity?.authorityRecord,
+      ...encryptionBootstrap,
       challengeNonce: message.challengeNonce,
       challengeSignature,
       workerInfo: this.buildWorkerInfo(),
@@ -398,7 +549,7 @@ export class ClientSideServerMQTTWebRTCServer {
     }
 
     if (this.mqtt) {
-      await publish(this.mqtt, this.options.mqttTopic ?? DEFAULT_CLIENT_SIDE_SERVER_MQTT_TOPIC, {
+      await publishJson(this.mqtt, resolvePlaintextTopic(this.options), {
         protocol: 'plat-css-v1',
         kind: 'announce',
         senderId: this.serverInstanceId,
@@ -426,7 +577,7 @@ export class ClientSideServerMQTTWebRTCServer {
 
     peer.onicecandidate = (event) => {
       if (!event.candidate || !this.mqtt) return
-      void publish(this.mqtt, this.options.mqttTopic ?? DEFAULT_CLIENT_SIDE_SERVER_MQTT_TOPIC, {
+      void publishJson(this.mqtt, resolvePlaintextTopic(this.options), {
         protocol: 'plat-css-v1',
         kind: 'ice',
         senderId: this.serverInstanceId,
@@ -478,7 +629,7 @@ export class ClientSideServerMQTTWebRTCServer {
     const answer = await peer.createAnswer()
     await peer.setLocalDescription(answer)
 
-    await publish(this.mqtt, this.options.mqttTopic ?? DEFAULT_CLIENT_SIDE_SERVER_MQTT_TOPIC, {
+    await publishJson(this.mqtt, resolvePlaintextTopic(this.options), {
       protocol: 'plat-css-v1',
       kind: 'answer',
       senderId: this.serverInstanceId,
@@ -503,6 +654,128 @@ export class ClientSideServerMQTTWebRTCServer {
     })
   }
 
+  private async acceptSealedOffer(
+    payload: Extract<ClientSideServerSealedPayload, { type: 'offer' }>,
+    response: ClientSideServerSealedResponseContext,
+  ): Promise<void> {
+    if (!this.mqtt) return
+    await this.ensureIdentity()
+    await this.ensureEncryptionIdentity()
+
+    const authOk = await this.authorizeSealedOffer(payload, response)
+    if (!authOk) return
+
+    if (this.options.workerInfo?.acceptingNewClients === false) {
+      await this.publishSealedResponse(response, {
+        type: 'reject',
+        connectionId: payload.connectionId,
+        serverName: this.options.serverName,
+        reason: 'server-not-accepting',
+        at: Date.now(),
+      })
+      return
+    }
+
+    const peer = new RTCPeerConnection({
+      iceServers: this.options.iceServers ?? DEFAULT_CLIENT_SIDE_SERVER_ICE_SERVERS,
+    })
+    this.peers.set(payload.connectionId, peer)
+
+    peer.onicecandidate = (event) => {
+      if (!event.candidate || !this.mqtt) return
+      void this.publishSealedResponse(response, {
+        type: 'ice',
+        connectionId: payload.connectionId,
+        serverName: this.options.serverName,
+        candidate: event.candidate.toJSON(),
+        at: Date.now(),
+      })
+    }
+
+    peer.onconnectionstatechange = () => {
+      if (peer.connectionState === 'failed' || peer.connectionState === 'closed' || peer.connectionState === 'disconnected') {
+        this.unsubscribeByConnection.get(payload.connectionId)?.()
+        this.unsubscribeByConnection.delete(payload.connectionId)
+        this.peers.delete(payload.connectionId)
+      }
+    }
+
+    peer.ondatachannel = (event) => {
+      const channel = createRTCDataChannelAdapter(event.channel)
+      const connId = payload.connectionId
+
+      const controlUnsubscribe = channel.subscribe(async (msg) => {
+        await this.handleControlMessage(msg, channel, connId)
+      })
+
+      const serveUnsubscribe = this.options.server.serveChannel(channel)
+      this.channels.set(connId, channel)
+      this.clientCount++
+
+      const cleanup = () => {
+        controlUnsubscribe()
+        serveUnsubscribe()
+        this.channels.delete(connId)
+        this.clientCount--
+        this.unsubscribeByConnection.delete(connId)
+      }
+
+      this.unsubscribeByConnection.set(connId, cleanup)
+      event.channel.addEventListener('close', cleanup, { once: true })
+    }
+
+    try {
+      await peer.setRemoteDescription(new RTCSessionDescription(payload.description))
+      for (const candidate of this.pendingCandidates.get(payload.connectionId) ?? []) {
+        await peer.addIceCandidate(new RTCIceCandidate(candidate))
+      }
+      this.pendingCandidates.delete(payload.connectionId)
+      const answer = await peer.createAnswer()
+      await peer.setLocalDescription(answer)
+
+      await this.publishSealedResponse(response, {
+        type: 'answer',
+        connectionId: payload.connectionId,
+        serverName: this.options.serverName,
+        description: answer,
+        identity: this.publicIdentity,
+        authorityRecord: this.options.identity?.authorityRecord,
+        challengeNonce: payload.challengeNonce,
+        challengeSignature: payload.challengeNonce
+          ? await signClientSideServerChallenge(
+              this.identityKeyPair!,
+              buildClientSideServerIdentityChallenge({
+                serverName: this.options.serverName,
+                connectionId: payload.connectionId,
+                challengeNonce: payload.challengeNonce,
+              }),
+            )
+          : undefined,
+        at: Date.now(),
+      })
+      debugSecure('secure answer sent', {
+        serverName: this.options.serverName,
+        connectionId: payload.connectionId,
+      })
+    } catch (error) {
+      debugSecure('sealed offer processing failed', {
+        serverName: this.options.serverName,
+        connectionId: payload.connectionId,
+        error: error instanceof Error ? error.message : String(error),
+      })
+      await this.publishSealedResponse(response, {
+        type: 'reject',
+        connectionId: payload.connectionId,
+        serverName: this.options.serverName,
+        reason: 'bad-message',
+        at: Date.now(),
+      })
+      peer.close()
+      this.peers.delete(payload.connectionId)
+      this.pendingCandidates.delete(payload.connectionId)
+    }
+  }
+
   private async ensureIdentity(): Promise<void> {
     if (this.identityKeyPair && this.publicIdentity) return
     const storageKey = this.options.identity?.keyPairStorageKey ?? `plat-css:keypair:${this.options.serverName}`
@@ -512,6 +785,115 @@ export class ClientSideServerMQTTWebRTCServer {
         storageKey,
       })
     this.publicIdentity = await toClientSideServerPublicIdentity(this.identityKeyPair)
+  }
+
+  private async ensureEncryptionIdentity(): Promise<void> {
+    if (this.encryptionKeyPair && this.encryptionPublicIdentity) return
+    if (this.options.serverEncryptionKeyPair) {
+      this.encryptionKeyPair = this.options.serverEncryptionKeyPair
+    } else {
+      this.encryptionKeyPair = await generateClientSideServerEncryptionKeyPair()
+    }
+    this.encryptionPublicIdentity = await toClientSideServerEncryptionPublicIdentity(this.encryptionKeyPair)
+  }
+
+  private isSealedReplay(senderId: string, nonce: string): boolean {
+    this.pruneSeenSealedNonces()
+    return this.seenSealedNonces.has(`${senderId}:${nonce}`)
+  }
+
+  private rememberSealedNonce(senderId: string, nonce: string): void {
+    this.pruneSeenSealedNonces()
+    this.seenSealedNonces.set(`${senderId}:${nonce}`, Date.now())
+  }
+
+  private pruneSeenSealedNonces(): void {
+    const cutoff = Date.now() - (this.options.replayWindowMs ?? DEFAULT_CLIENT_SIDE_SERVER_REPLAY_WINDOW_MS)
+    for (const [key, value] of this.seenSealedNonces.entries()) {
+      if (value < cutoff) {
+        this.seenSealedNonces.delete(key)
+      }
+    }
+  }
+
+  private async publishSealedResponse(
+    response: ClientSideServerSealedResponseContext,
+    payload: ClientSideServerSealedAnswerPayload | ClientSideServerSealedIcePayload | ClientSideServerSealedRejectPayload,
+  ): Promise<void> {
+    if (!this.mqtt) return
+    const sealed = await sealClientSideServerPayloadForServer({
+      senderId: this.serverInstanceId,
+      payload,
+      serverEncryptionKeyPair: this.encryptionKeyPair,
+      clientEphemeralPublicKeyJwk: response.clientEphemeralPublicKeyJwk,
+      maxSealedMessageBytes: this.options.maxSealedMessageBytes,
+    })
+    if (payload.type === 'reject') {
+      debugSecure('sealed reject sent', {
+        serverName: this.options.serverName,
+        connectionId: payload.connectionId,
+        reason: payload.reason,
+      })
+    }
+    await publishRaw(this.mqtt, resolveSealedTopic(this.options), serializeSealedEnvelope(sealed.envelope))
+  }
+
+  private async authorizeSealedOffer(
+    payload: Extract<ClientSideServerSealedPayload, { type: 'offer' }>,
+    response: ClientSideServerSealedResponseContext,
+  ): Promise<boolean> {
+    const signalingAuth = this.options.signalingAuth
+    if (!signalingAuth) return true
+
+    if (!payload.auth) {
+      if (signalingAuth.required !== false) {
+        await this.publishSealedResponse(response, {
+          type: 'reject',
+          connectionId: payload.connectionId,
+          serverName: this.options.serverName,
+          reason: 'auth-required',
+          at: Date.now(),
+        })
+        return false
+      }
+      return true
+    }
+
+    if (typeof signalingAuth.verify !== 'function') {
+      if (signalingAuth.required !== false) {
+        await this.publishSealedResponse(response, {
+          type: 'reject',
+          connectionId: payload.connectionId,
+          serverName: this.options.serverName,
+          reason: 'auth-required',
+          at: Date.now(),
+        })
+        return false
+      }
+      return true
+    }
+
+    let verified = false
+    try {
+      verified = await signalingAuth.verify(payload.auth, {
+        serverName: this.options.serverName,
+        connectionId: payload.connectionId,
+        senderId: response.senderId,
+      })
+    } catch {
+      verified = false
+    }
+    if (!verified) {
+      await this.publishSealedResponse(response, {
+        type: 'reject',
+        connectionId: payload.connectionId,
+        serverName: this.options.serverName,
+        reason: 'auth-failed',
+        at: Date.now(),
+      })
+      return false
+    }
+    return true
   }
 }
 
@@ -628,7 +1010,7 @@ export async function discoverClientSideServers(
   options: ClientSideServerMQTTWebRTCOptions = {},
 ): Promise<ClientSideServerDiscoveryResult> {
   const mqttClient = await connectToBroker(options)
-  const topic = options.mqttTopic ?? DEFAULT_CLIENT_SIDE_SERVER_MQTT_TOPIC
+  const topic = resolvePlaintextTopic(options)
   const peerId = `${options.clientIdPrefix ?? 'client'}:${randomId('discover')}`
   const challengeNonce = randomId('challenge') + '-mqtt'
   const timeoutMs = options.workerPool?.discoveryTimeoutMs ?? 3000
@@ -658,7 +1040,7 @@ export async function discoverClientSideServers(
     }
 
     if (message.authorityRecord && options.identity?.authority?.publicKeyJwk) {
-      const authorityOk = await verifySignedClientSideServerAuthorityRecord(
+      const authorityOk = await verifyAnySignedClientSideServerAuthorityRecord(
         message.authorityRecord,
         options.identity.authority.publicKeyJwk,
       )
@@ -772,7 +1154,8 @@ export async function createClientSideServerMQTTWebRTCPeerSession(
 ): Promise<ClientSideServerPeerSession> {
   const webrtc = await resolveClientWebRTCImplementation()
   const mqtt = await connectToBroker(options)
-  const topic = options.mqttTopic ?? DEFAULT_CLIENT_SIDE_SERVER_MQTT_TOPIC
+  const plaintextTopic = resolvePlaintextTopic(options)
+  const sealedTopic = resolveSealedTopic(options)
   const peerId = `${options.clientIdPrefix ?? 'client'}:${randomId('peer')}`
   const connectionId = randomId('conn')
   const challengeNonce = randomId('challenge')
@@ -786,13 +1169,72 @@ export async function createClientSideServerMQTTWebRTCPeerSession(
   const cleanupCallbacks: Array<() => void> = []
   const pendingCandidates: RTCIceCandidateInit[] = []
   const expectedIdentity = await resolveExpectedServerIdentity(address.serverName, options.identity)
+  let secureState: ClientSideServerSecureClientSessionState | undefined
   let open = true
   let answerApplied = false
   let serverIdentity: ClientSideServerPublicIdentity | undefined
 
-  await subscribe(mqtt, topic)
+  await subscribe(mqtt, plaintextTopic)
+  if (sealedTopic !== plaintextTopic) {
+    await subscribe(mqtt, sealedTopic)
+  }
+  if (isSecureSignalingEnabled(options)) {
+    secureState = await createSecureClientSessionState({
+      mqtt,
+      address,
+      options,
+      peerId,
+      expectedIdentity,
+    })
+  }
 
   const onMessage = async (_topic: string, payload: Buffer) => {
+    if (secureState) {
+      const opened = await openClientSideServerSealedEnvelopeForClient({
+        envelopePayload: payload,
+        secureState,
+      })
+      if (!opened || opened.envelope.senderId === peerId || opened.payload.connectionId !== connectionId) return
+
+      if (opened.payload.type === 'reject') {
+        ready.reject(new Error(`Client-side server ${address.serverName} rejected connection: ${opened.payload.reason}`))
+        return
+      }
+
+      if (opened.payload.type === 'answer' && opened.payload.description) {
+        if (answerApplied) return
+        answerApplied = true
+        await verifyServerIdentityForSealedAnswer({
+          serverName: address.serverName,
+          connectionId,
+          challengeNonce,
+          message: opened.payload,
+          optionsIdentity: options.identity,
+          expectedIdentity,
+        })
+        serverIdentity = opened.payload.identity
+        await peer.setRemoteDescription(webrtc.createSessionDescription(opened.payload.description))
+        await maybeTrustServerAfterAnswer(address.serverName, expectedIdentity, opened.payload, options.identity)
+        for (const candidate of pendingCandidates.splice(0, pendingCandidates.length)) {
+          await peer.addIceCandidate(webrtc.createIceCandidate(candidate))
+        }
+        return
+      }
+
+      if (opened.payload.type === 'ice') {
+        debugSecure('secure ICE received', {
+          serverName: address.serverName,
+          connectionId,
+        })
+        if (peer.remoteDescription) {
+          await peer.addIceCandidate(webrtc.createIceCandidate(opened.payload.candidate))
+        } else {
+          pendingCandidates.push(opened.payload.candidate)
+        }
+      }
+      return
+    }
+
     const message = parseSignalingMessage(payload)
     if (!message || message.senderId === peerId || message.targetId !== peerId || message.connectionId !== connectionId) {
       return
@@ -811,31 +1253,7 @@ export async function createClientSideServerMQTTWebRTCPeerSession(
       })
       serverIdentity = message.identity
       await peer.setRemoteDescription(webrtc.createSessionDescription(message.description))
-      if (!expectedIdentity && message.authorityRecord && options.identity?.authority?.publicKeyJwk) {
-        const trusted = await trustClientSideServerFromAuthorityRecord(
-          message.authorityRecord,
-          options.identity.authority.publicKeyJwk,
-          {
-            storage: options.identity?.knownHostsStorage,
-            storageKey: options.identity?.knownHostsStorageKey,
-          },
-        )
-        if (options.identity?.knownHosts) {
-          saveTrustedClientSideServerRecordToMap(options.identity.knownHosts, trusted)
-        }
-      } else if (!expectedIdentity && options.identity?.trustOnFirstUse !== false && message.identity) {
-        const trusted = await trustClientSideServerOnFirstUse(
-          address.serverName,
-          message.identity,
-          {
-            storage: options.identity?.knownHostsStorage,
-            storageKey: options.identity?.knownHostsStorageKey,
-          },
-        )
-        if (options.identity?.knownHosts) {
-          saveTrustedClientSideServerRecordToMap(options.identity.knownHosts, trusted)
-        }
-      }
+      await maybeTrustServerAfterAnswer(address.serverName, expectedIdentity, message, options.identity)
       for (const candidate of pendingCandidates.splice(0, pendingCandidates.length)) {
         await peer.addIceCandidate(webrtc.createIceCandidate(candidate))
       }
@@ -855,10 +1273,29 @@ export async function createClientSideServerMQTTWebRTCPeerSession(
   cleanupCallbacks.push(() => mqtt.off('message', onMessage))
 
   const offerTarget = targetInstanceId ?? address.serverName
+  const addressAuth = resolveAddressAuth(address)
 
   peer.onicecandidate = (event: any) => {
     if (!event.candidate) return
-    void publish(mqtt, topic, {
+    if (secureState) {
+      void publishSealedClientPayload({
+        mqtt,
+        options,
+        senderId: peerId,
+        secureState,
+        payload: {
+          type: 'ice',
+          connectionId,
+          serverName: address.serverName,
+          candidate: webrtc.serializeIceCandidate(event.candidate),
+          at: Date.now(),
+        },
+      }).then(() => {
+        debugSecure('secure ICE sent', { serverName: address.serverName, connectionId })
+      })
+      return
+    }
+    void publish(mqtt, plaintextTopic, {
       protocol: 'plat-css-v1',
       kind: 'ice',
       senderId: peerId,
@@ -891,24 +1328,51 @@ export async function createClientSideServerMQTTWebRTCPeerSession(
 
   const offer = await peer.createOffer()
   await peer.setLocalDescription(offer)
-  await publish(mqtt, topic, {
-    protocol: 'plat-css-v1',
-    kind: 'offer',
-    senderId: peerId,
-    targetId: offerTarget,
-    serverName: address.serverName,
-    connectionId,
-    description: offer,
-    challengeNonce,
-    at: Date.now(),
-  })
+  if (secureState) {
+    await publishSealedClientPayload({
+      mqtt,
+      options,
+      senderId: peerId,
+      secureState,
+      payload: {
+        type: 'offer',
+        connectionId,
+        serverName: address.serverName,
+        description: offer,
+        challengeNonce,
+        requirePrivateChallenge: options.requirePrivateChallenge,
+        auth: addressAuth,
+        at: Date.now(),
+      },
+    })
+  } else {
+    await publish(mqtt, plaintextTopic, {
+      protocol: 'plat-css-v1',
+      kind: 'offer',
+      senderId: peerId,
+      targetId: offerTarget,
+      serverName: address.serverName,
+      connectionId,
+      description: offer,
+      challengeNonce,
+      at: Date.now(),
+    })
+  }
 
   const timer = setTimeout(() => {
     ready.reject(new Error(`Timed out connecting to client-side server ${address.serverName}`))
   }, timeoutMs)
   cleanupCallbacks.push(() => clearTimeout(timer))
 
-  await ready.promise
+  try {
+    await ready.promise
+  } catch (error) {
+    open = false
+    for (const cleanup of cleanupCallbacks) cleanup()
+    peer.close()
+    await endClient(mqtt)
+    throw error
+  }
 
   const channel = createRTCDataChannelAdapter(dataChannel as RTCDataChannel)
   const originalClose = channel.close?.bind(channel)
@@ -951,9 +1415,9 @@ export async function createClientSideServerMQTTWebRTCPeerSession(
 async function resolveExpectedServerIdentity(
   serverName: string,
   options?: ClientSideServerIdentityOptions,
-): Promise<ClientSideServerTrustedServerRecord | null> {
+): Promise<ClientSideServerResolvedExpectedIdentity | null> {
   const mapped = loadTrustedClientSideServerRecordFromMap(options?.knownHosts, serverName)
-  if (mapped) return mapped
+  if (mapped) return normalizeExpectedIdentity(mapped)
 
   if (options?.authorityServers?.length) {
     const trusted = await resolveTrustedClientSideServerFromAuthorities(
@@ -968,12 +1432,12 @@ async function resolveExpectedServerIdentity(
       if (options.knownHosts) {
         saveTrustedClientSideServerRecordToMap(options.knownHosts, trusted)
       }
-      return trusted
+      return normalizeExpectedIdentity(trusted)
     }
   }
 
   const authorityResolved = options?.authorityResolver ? await options.authorityResolver(serverName) : null
-  if (authorityResolved) return authorityResolved
+  if (authorityResolved) return normalizeExpectedIdentity(authorityResolved)
   const stored = loadTrustedClientSideServerRecord(serverName, {
     storage: options?.knownHostsStorage,
     storageKey: options?.knownHostsStorageKey,
@@ -981,7 +1445,7 @@ async function resolveExpectedServerIdentity(
   if (stored && options?.knownHosts) {
     saveTrustedClientSideServerRecordToMap(options.knownHosts, stored)
   }
-  return stored
+  return stored ? normalizeExpectedIdentity(stored) : null
 }
 
 async function verifyServerIdentityForAnswer(input: {
@@ -990,7 +1454,7 @@ async function verifyServerIdentityForAnswer(input: {
   challengeNonce: string
   message: ClientSideServerSignalingMessage
   optionsIdentity?: ClientSideServerIdentityOptions
-  expectedIdentity: ClientSideServerTrustedServerRecord | null
+  expectedIdentity: ClientSideServerResolvedExpectedIdentity | null
 }): Promise<void> {
   const { message, serverName, connectionId, challengeNonce, expectedIdentity } = input
   if (!message.identity || !message.challengeSignature) {
@@ -1001,14 +1465,14 @@ async function verifyServerIdentityForAnswer(input: {
   }
 
   if (message.authorityRecord && input.optionsIdentity?.authority?.publicKeyJwk) {
-    const authorityOk = await verifySignedClientSideServerAuthorityRecord(
+    const authorityOk = await verifyAnySignedClientSideServerAuthorityRecord(
       message.authorityRecord,
       input.optionsIdentity.authority.publicKeyJwk,
     )
     if (!authorityOk) {
       throw new Error(`Server ${serverName} provided an invalid authority record`)
     }
-    if (!clientSideServerPublicKeysEqual(message.authorityRecord.publicKeyJwk, message.identity.publicKeyJwk)) {
+    if (!clientSideServerPublicKeysEqual(getAuthoritySigningPublicKey(message.authorityRecord), message.identity.publicKeyJwk)) {
       throw new Error(`Server ${serverName} authority record does not match presented identity`)
     }
   }
@@ -1026,8 +1490,71 @@ async function verifyServerIdentityForAnswer(input: {
     throw new Error(`Server ${serverName} failed identity challenge verification`)
   }
 
-  if (expectedIdentity && !clientSideServerPublicKeysEqual(expectedIdentity.publicKeyJwk, message.identity.publicKeyJwk)) {
+  if (expectedIdentity && !clientSideServerPublicKeysEqual(expectedIdentity.signing.publicKeyJwk, message.identity.publicKeyJwk)) {
     throw new Error(`Server ${serverName} presented an unexpected public key`)
+  }
+}
+
+async function verifyServerIdentityForSealedAnswer(input: {
+  serverName: string
+  connectionId: string
+  challengeNonce: string
+  message: ClientSideServerSealedAnswerPayload
+  optionsIdentity?: ClientSideServerIdentityOptions
+  expectedIdentity: ClientSideServerResolvedExpectedIdentity | null
+}): Promise<void> {
+  const message: ClientSideServerSignalingMessage = {
+    protocol: 'plat-css-v1',
+    kind: 'answer',
+    senderId: 'sealed',
+    connectionId: input.connectionId,
+    serverName: input.serverName,
+    description: input.message.description,
+    identity: input.message.identity,
+    authorityRecord: input.message.authorityRecord,
+    challengeNonce: input.message.challengeNonce,
+    challengeSignature: input.message.challengeSignature,
+    at: input.message.at,
+  }
+  await verifyServerIdentityForAnswer({
+    ...input,
+    message,
+  })
+}
+
+async function maybeTrustServerAfterAnswer(
+  serverName: string,
+  expectedIdentity: ClientSideServerResolvedExpectedIdentity | null,
+  message: Pick<ClientSideServerSignalingMessage, 'authorityRecord' | 'identity'>,
+  identityOptions?: ClientSideServerIdentityOptions,
+): Promise<void> {
+  if (expectedIdentity) return
+  if (message.authorityRecord && identityOptions?.authority?.publicKeyJwk) {
+    const trusted = await trustClientSideServerFromAuthorityRecord(
+      message.authorityRecord,
+      identityOptions.authority.publicKeyJwk,
+      {
+        storage: identityOptions?.knownHostsStorage,
+        storageKey: identityOptions?.knownHostsStorageKey,
+      },
+    )
+    if (identityOptions?.knownHosts) {
+      saveTrustedClientSideServerRecordToMap(identityOptions.knownHosts, trusted)
+    }
+    return
+  }
+  if (identityOptions?.trustOnFirstUse !== false && message.identity) {
+    const trusted = await trustClientSideServerOnFirstUse(
+      serverName,
+      message.identity,
+      {
+        storage: identityOptions?.knownHostsStorage,
+        storageKey: identityOptions?.knownHostsStorageKey,
+      },
+    )
+    if (identityOptions?.knownHosts) {
+      saveTrustedClientSideServerRecordToMap(identityOptions.knownHosts, trusted)
+    }
   }
 }
 
@@ -1087,6 +1614,19 @@ function publish(client: MqttClient, topic: string, message: ClientSideServerSig
   })
 }
 
+function publishJson(client: MqttClient, topic: string, message: ClientSideServerSignalingMessage): Promise<void> {
+  return publish(client, topic, message)
+}
+
+function publishRaw(client: MqttClient, topic: string, message: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    client.publish(topic, message, (error) => {
+      if (error) reject(error)
+      else resolve()
+    })
+  })
+}
+
 function endClient(client: MqttClient): Promise<void> {
   return new Promise((resolve) => {
     client.end(false, {}, () => resolve())
@@ -1115,6 +1655,454 @@ function randomId(prefix: string): string {
 
 function isDefaultMQTTWebRTCOptions(options: ClientSideServerMQTTWebRTCOptions): boolean {
   return Object.keys(options).length === 0
+}
+
+function isSecureSignalingEnabled(options: ClientSideServerMQTTWebRTCOptions): boolean {
+  return options.secureSignaling !== false
+}
+
+function resolvePlaintextTopic(options: ClientSideServerMQTTWebRTCOptions): string {
+  return options.mqttTopic ?? DEFAULT_CLIENT_SIDE_SERVER_MQTT_TOPIC
+}
+
+function resolveSealedTopic(options: ClientSideServerMQTTWebRTCOptions): string {
+  if (isSecureSignalingEnabled(options) && options.anonymousRouting !== false) {
+    return options.sealedTopic ?? DEFAULT_CLIENT_SIDE_SERVER_SEALED_TOPIC
+  }
+  return resolvePlaintextTopic(options)
+}
+
+function envelopeIsReplayedOrStale(
+  payload: ClientSideServerSealedPayload,
+  options: ClientSideServerMQTTWebRTCOptions,
+): boolean {
+  const replayWindowMs = options.replayWindowMs ?? DEFAULT_CLIENT_SIDE_SERVER_REPLAY_WINDOW_MS
+  const clockSkewToleranceMs = options.clockSkewToleranceMs ?? DEFAULT_CLIENT_SIDE_SERVER_CLOCK_SKEW_TOLERANCE_MS
+  const stale = Math.abs(Date.now() - payload.at) > (clockSkewToleranceMs + replayWindowMs)
+  if (stale) {
+    debugSecure('sealed payload stale', { type: payload.type, connectionId: payload.connectionId, at: payload.at })
+  }
+  return stale
+}
+
+async function openClientSideServerSealedEnvelopeForServer(input: {
+  envelopePayload: Buffer | Uint8Array
+  serverEncryptionKeyPair?: ClientSideServerEncryptionKeyPair
+}): Promise<{ envelope: ClientSideServerSealedEnvelope; payload: ClientSideServerSealedPayload } | null> {
+  if (!input.serverEncryptionKeyPair) return null
+  const envelope = parseSealedEnvelope(input.envelopePayload)
+  if (!envelope) return null
+  try {
+    const privateKey = await importX25519PrivateKeyJwk(input.serverEncryptionKeyPair.privateKeyJwk)
+    const publicKey = await importX25519PublicKeyJwk(envelope.clientEphemeralPublicKeyJwk)
+    const aeadKey = await deriveAeadKeyFromX25519(privateKey, publicKey, utf8('plat-css-sealed-signaling-v1'))
+    const ciphertext = unpadCiphertext(decodeBase64Url(envelope.ciphertext))
+    const payload = await decryptJsonAead<ClientSideServerSealedPayload>(
+      aeadKey,
+      ciphertext,
+      buildSealedEnvelopeAad(envelope),
+      decodeBase64Url(envelope.nonce),
+    )
+    if (!isClientSideServerSealedPayload(payload)) {
+      debugSecure('sealed decrypt failed', { reason: 'payload-validator' })
+      return null
+    }
+    return { envelope, payload }
+  } catch (error) {
+    debugSecure('sealed decrypt failed', { error: error instanceof Error ? error.message : String(error) })
+    return null
+  }
+}
+
+async function openClientSideServerSealedEnvelopeForClient(input: {
+  envelopePayload: Buffer | Uint8Array
+  secureState: ClientSideServerSecureClientSessionState
+}): Promise<{ envelope: ClientSideServerSealedEnvelope; payload: ClientSideServerSealedPayload } | null> {
+  const envelope = parseSealedEnvelope(input.envelopePayload)
+  if (!envelope) return null
+  try {
+    const aeadKey = await deriveAeadKeyFromX25519(
+      input.secureState.keyPair.privateKey,
+      input.secureState.serverEncryptionPublicKey,
+      utf8('plat-css-sealed-signaling-v1'),
+    )
+    const payload = await decryptJsonAead<ClientSideServerSealedPayload>(
+      aeadKey,
+      unpadCiphertext(decodeBase64Url(envelope.ciphertext)),
+      buildSealedEnvelopeAad(envelope),
+      decodeBase64Url(envelope.nonce),
+    )
+    if (!isClientSideServerSealedPayload(payload)) return null
+    return { envelope, payload }
+  } catch {
+    return null
+  }
+}
+
+async function createSecureClientSessionState(input: {
+  mqtt: MqttClient
+  address: ClientSideServerAddress
+  options: ClientSideServerMQTTWebRTCOptions
+  peerId: string
+  expectedIdentity: ClientSideServerResolvedExpectedIdentity | null
+}): Promise<ClientSideServerSecureClientSessionState> {
+  const keyPair = await generateEphemeralX25519KeyPair()
+  const serverEncryptionPublicKeyJwk = input.address.encryptionPublicKeyJwk
+    ?? input.expectedIdentity?.encryption?.publicKeyJwk
+  if (serverEncryptionPublicKeyJwk) {
+    return {
+      keyPair,
+      serverEncryptionPublicKeyJwk,
+      serverEncryptionPublicKey: await importX25519PublicKeyJwk(serverEncryptionPublicKeyJwk),
+    }
+  }
+  return bootstrapServerEncryptionIdentity({
+    ...input,
+    keyPair,
+  })
+}
+
+async function bootstrapServerEncryptionIdentity(input: {
+  mqtt: MqttClient
+  address: ClientSideServerAddress
+  options: ClientSideServerMQTTWebRTCOptions
+  peerId: string
+  expectedIdentity: ClientSideServerResolvedExpectedIdentity | null
+  keyPair: PlatEphemeralKeyPair
+}): Promise<ClientSideServerSecureClientSessionState> {
+  const challengeNonce = randomId('enc-bootstrap')
+  const timeoutMs = Math.min(
+    input.options.connectionTimeoutMs ?? 10_000,
+    input.options.workerPool?.discoveryTimeoutMs ?? 3_000,
+  )
+  const ready = deferred<ClientSideServerSecureClientSessionState>()
+
+  const onMessage = async (_topic: string, payload: Buffer) => {
+    const message = parseSignalingMessage(payload)
+    if (!message || message.senderId === input.peerId) return
+    if (message.kind !== 'announce') return
+    if (message.serverName !== input.address.serverName) return
+    if (message.challengeNonce !== challengeNonce) return
+    if (!message.identity || !message.challengeSignature || !message.encryptionIdentity) return
+    if (!message.encryptionChallengeCiphertext || !message.encryptionChallengeNonce) return
+    if (
+      input.expectedIdentity
+      && !clientSideServerPublicKeysEqual(input.expectedIdentity.signing.publicKeyJwk, message.identity.publicKeyJwk)
+    ) {
+      return
+    }
+    if (message.authorityRecord && input.options.identity?.authority?.publicKeyJwk) {
+      const authorityOk = await verifyAnySignedClientSideServerAuthorityRecord(
+        message.authorityRecord,
+        input.options.identity.authority.publicKeyJwk,
+      )
+      if (!authorityOk) return
+      if (
+        isClientSideServerSignedAuthorityRecordV2(message.authorityRecord)
+        && !clientSideServerPublicKeysEqual(
+          message.authorityRecord.encryptionPublicKeyJwk,
+          message.encryptionIdentity.publicKeyJwk,
+        )
+      ) {
+        return
+      }
+    }
+
+    const signedChallengeOk = await verifyClientSideServerChallenge(
+      message.identity.publicKeyJwk,
+      buildClientSideServerIdentityChallenge({
+        serverName: input.address.serverName,
+        connectionId: message.senderId,
+        challengeNonce,
+      }),
+      message.challengeSignature,
+    )
+    if (!signedChallengeOk) return
+
+    try {
+      const serverEncryptionPublicKey = await importX25519PublicKeyJwk(message.encryptionIdentity.publicKeyJwk)
+      const aeadKey = await deriveAeadKeyFromX25519(
+        input.keyPair.privateKey,
+        serverEncryptionPublicKey,
+        utf8('plat-css-sealed-signaling-v1'),
+      )
+      const proof = await decryptJsonAead<{ challengeNonce: string; senderId: string; serverName: string }>(
+        aeadKey,
+        decodeBase64Url(message.encryptionChallengeCiphertext),
+        buildBootstrapEncryptionAad({
+          senderId: message.senderId,
+          serverName: input.address.serverName,
+          challengeNonce,
+          clientEphemeralPublicKeyJwk: input.keyPair.publicKeyJwk,
+          serverEncryptionPublicKeyJwk: message.encryptionIdentity.publicKeyJwk,
+        }),
+        decodeBase64Url(message.encryptionChallengeNonce),
+      )
+      if (proof.challengeNonce !== challengeNonce) return
+      if (proof.senderId !== message.senderId) return
+      if (proof.serverName !== input.address.serverName) return
+      ready.resolve({
+        keyPair: input.keyPair,
+        serverEncryptionPublicKeyJwk: message.encryptionIdentity.publicKeyJwk,
+        serverEncryptionPublicKey,
+      })
+    } catch {
+      return
+    }
+  }
+
+  input.mqtt.on('message', onMessage)
+  const timer = setTimeout(() => {
+    ready.reject(new Error(`Timed out bootstrapping encryption public key for ${input.address.serverName}`))
+  }, timeoutMs)
+
+  try {
+    await publish(input.mqtt, resolvePlaintextTopic(input.options), {
+      protocol: 'plat-css-v1',
+      kind: 'discover',
+      senderId: input.peerId,
+      targetId: input.address.serverName,
+      challengeNonce,
+      requestEncryptionIdentity: true,
+      bootstrapClientEphemeralPublicKeyJwk: input.keyPair.publicKeyJwk,
+      at: Date.now(),
+    })
+    const secureState = await ready.promise
+    input.address.encryptionPublicKeyJwk = secureState.serverEncryptionPublicKeyJwk
+    return secureState
+  } finally {
+    clearTimeout(timer)
+    input.mqtt.off('message', onMessage)
+  }
+}
+
+async function createPublicEncryptionBootstrapResponse(input: {
+  serverInstanceId: string
+  serverName: string
+  serverEncryptionKeyPair?: ClientSideServerEncryptionKeyPair
+  serverEncryptionIdentity?: ClientSideServerEncryptionPublicIdentity
+  challengeNonce?: string
+  clientEphemeralPublicKeyJwk: JsonWebKey
+}): Promise<Pick<ClientSideServerSignalingMessage, 'encryptionIdentity' | 'encryptionChallengeCiphertext' | 'encryptionChallengeNonce'>> {
+  if (!input.serverEncryptionKeyPair || !input.serverEncryptionIdentity || !input.challengeNonce) {
+    return {}
+  }
+  const privateKey = await importX25519PrivateKeyJwk(input.serverEncryptionKeyPair.privateKeyJwk)
+  const publicKey = await importX25519PublicKeyJwk(input.clientEphemeralPublicKeyJwk)
+  const aeadKey = await deriveAeadKeyFromX25519(privateKey, publicKey, utf8('plat-css-sealed-signaling-v1'))
+  const nonce = randomNonce12()
+  const ciphertext = await encryptJsonAead(
+    aeadKey,
+    {
+      challengeNonce: input.challengeNonce,
+      senderId: input.serverInstanceId,
+      serverName: input.serverName,
+    },
+    buildBootstrapEncryptionAad({
+      senderId: input.serverInstanceId,
+      serverName: input.serverName,
+      challengeNonce: input.challengeNonce,
+      clientEphemeralPublicKeyJwk: input.clientEphemeralPublicKeyJwk,
+      serverEncryptionPublicKeyJwk: input.serverEncryptionIdentity.publicKeyJwk,
+    }),
+    nonce,
+  )
+  return {
+    encryptionIdentity: input.serverEncryptionIdentity,
+    encryptionChallengeCiphertext: encodeBase64Url(ciphertext),
+    encryptionChallengeNonce: encodeBase64Url(nonce),
+  }
+}
+
+async function publishSealedClientPayload(input: {
+  mqtt: MqttClient
+  options: ClientSideServerMQTTWebRTCOptions
+  senderId: string
+  secureState: ClientSideServerSecureClientSessionState
+  payload: ClientSideServerSealedPayload
+}): Promise<void> {
+  const nonce = randomNonce12()
+  const envelope = await sealClientSideServerPayload({
+    senderId: input.senderId,
+    payload: input.payload,
+    privateKey: input.secureState.keyPair.privateKey,
+    peerPublicKey: input.secureState.serverEncryptionPublicKey,
+    clientEphemeralPublicKeyJwk: input.secureState.keyPair.publicKeyJwk,
+    serverEncryptionPublicKeyJwk: input.secureState.serverEncryptionPublicKeyJwk,
+    maxSealedMessageBytes: input.options.maxSealedMessageBytes,
+    nonce,
+  })
+  await publishRaw(input.mqtt, resolveSealedTopic(input.options), serializeSealedEnvelope(envelope.envelope))
+}
+
+async function sealClientSideServerPayloadForServer(input: {
+  senderId: string
+  payload: ClientSideServerSealedAnswerPayload | ClientSideServerSealedIcePayload | ClientSideServerSealedRejectPayload
+  serverEncryptionKeyPair?: ClientSideServerEncryptionKeyPair
+  clientEphemeralPublicKeyJwk: JsonWebKey
+  maxSealedMessageBytes?: number
+}): Promise<{ envelope: ClientSideServerSealedEnvelope; sessionId: string }> {
+  if (!input.serverEncryptionKeyPair) {
+    throw new Error('Server encryption key pair is required for sealed signaling')
+  }
+  const privateKey = await importX25519PrivateKeyJwk(input.serverEncryptionKeyPair.privateKeyJwk)
+  const publicKey = await importX25519PublicKeyJwk(input.clientEphemeralPublicKeyJwk)
+  return {
+    ...(await sealClientSideServerPayload({
+      senderId: input.senderId,
+      payload: input.payload,
+      privateKey,
+      peerPublicKey: publicKey,
+      clientEphemeralPublicKeyJwk: input.clientEphemeralPublicKeyJwk,
+      serverEncryptionPublicKeyJwk: input.serverEncryptionKeyPair.publicKeyJwk,
+      maxSealedMessageBytes: input.maxSealedMessageBytes,
+    })),
+  }
+}
+
+async function sealClientSideServerPayload(input: {
+  senderId: string
+  payload: ClientSideServerSealedPayload
+  privateKey: CryptoKey
+  peerPublicKey: CryptoKey
+  clientEphemeralPublicKeyJwk: JsonWebKey
+  serverEncryptionPublicKeyJwk: JsonWebKey
+  maxSealedMessageBytes?: number
+  nonce?: Uint8Array
+}): Promise<{ envelope: ClientSideServerSealedEnvelope; sessionId: string }> {
+  const nonceBytes = input.nonce ?? randomNonce12()
+  const nonce = encodeBase64Url(nonceBytes)
+  const at = Date.now()
+  const sessionId = await computeSessionId({
+    clientEphemeralPublicKeyJwk: input.clientEphemeralPublicKeyJwk,
+    serverEncryptionPublicKeyJwk: input.serverEncryptionPublicKeyJwk,
+    nonceB64u: nonce,
+  }).catch(() => '')
+  const aeadKey = await deriveAeadKeyFromX25519(input.privateKey, input.peerPublicKey, utf8('plat-css-sealed-signaling-v1'))
+  const aadEnvelope = {
+    platcss: 'sealed' as const,
+    version: 1 as const,
+    senderId: input.senderId,
+    at,
+    nonce,
+    clientEphemeralPublicKeyJwk: input.clientEphemeralPublicKeyJwk,
+  }
+  const ciphertext = await encryptJsonAead(aeadKey, input.payload, utf8(stableJson(aadEnvelope)), nonceBytes)
+  const bucket = choosePaddingBucket(ciphertext.byteLength)
+  const padded = padCiphertext(ciphertext, bucket)
+  const maxBytes = input.maxSealedMessageBytes ?? DEFAULT_CLIENT_SIDE_SERVER_MAX_SEALED_MESSAGE_BYTES
+  if (padded.byteLength > maxBytes) {
+    throw new Error(`Sealed signaling message exceeds maximum size of ${maxBytes} bytes`)
+  }
+  return {
+    sessionId,
+    envelope: {
+      ...aadEnvelope,
+      ciphertext: encodeBase64Url(padded),
+    },
+  }
+}
+
+function parseSealedEnvelope(payload: Buffer | Uint8Array): ClientSideServerSealedEnvelope | null {
+  try {
+    const text = payload instanceof Uint8Array ? new TextDecoder().decode(payload) : String(payload)
+    const parsed = JSON.parse(text)
+    if (!isClientSideServerSealedEnvelope(parsed)) {
+      debugSecure('sealed envelope parse failed', { reason: 'validator' })
+      return null
+    }
+    return parsed
+  } catch {
+    return null
+  }
+}
+
+function buildSealedEnvelopeAad(envelope: ClientSideServerSealedEnvelope): Uint8Array {
+  return utf8(stableJson({
+    platcss: 'sealed',
+    version: 1,
+    senderId: envelope.senderId,
+    at: envelope.at,
+    nonce: envelope.nonce,
+    clientEphemeralPublicKeyJwk: envelope.clientEphemeralPublicKeyJwk,
+  }))
+}
+
+function buildBootstrapEncryptionAad(input: {
+  senderId: string
+  serverName: string
+  challengeNonce: string
+  clientEphemeralPublicKeyJwk: JsonWebKey
+  serverEncryptionPublicKeyJwk: JsonWebKey
+}): Uint8Array {
+  return utf8(stableJson({
+    protocol: 'plat-css-v1',
+    kind: 'announce',
+    senderId: input.senderId,
+    serverName: input.serverName,
+    challengeNonce: input.challengeNonce,
+    bootstrapClientEphemeralPublicKeyJwk: input.clientEphemeralPublicKeyJwk,
+    encryptionPublicKeyJwk: input.serverEncryptionPublicKeyJwk,
+  }))
+}
+
+function serializeSealedEnvelope(envelope: ClientSideServerSealedEnvelope): string {
+  return JSON.stringify({
+    platcss: envelope.platcss,
+    version: envelope.version,
+    senderId: envelope.senderId,
+    at: envelope.at,
+    nonce: envelope.nonce,
+    clientEphemeralPublicKeyJwk: envelope.clientEphemeralPublicKeyJwk,
+    ciphertext: envelope.ciphertext,
+  })
+}
+
+function resolveAddressAuth(address: ClientSideServerAddress): { username: string; password: string } | undefined {
+  const username = address.params.username
+  const password = address.params.password
+  if (!username || !password) return undefined
+  return { username, password }
+}
+
+function getAuthoritySigningPublicKey(record: ClientSideServerAnyAuthorityRecord): JsonWebKey {
+  return isClientSideServerSignedAuthorityRecordV2(record)
+    ? record.signingPublicKeyJwk
+    : record.publicKeyJwk
+}
+
+function normalizeExpectedIdentity(record: ClientSideServerAnyTrustedServerRecord): ClientSideServerResolvedExpectedIdentity {
+  if (isClientSideServerTrustedServerRecordV2(record)) {
+    return {
+      trustedRecord: record,
+      signing: {
+        algorithm: 'ECDSA-P256',
+        publicKeyJwk: record.signingPublicKeyJwk,
+        keyId: record.signingKeyId ?? 'signing-key',
+        fingerprint: record.signingFingerprint,
+      },
+      encryption: {
+        algorithm: 'X25519',
+        publicKeyJwk: record.encryptionPublicKeyJwk,
+        keyId: record.encryptionKeyId ?? 'encryption-key',
+        fingerprint: record.encryptionFingerprint,
+      },
+    }
+  }
+  return {
+    trustedRecord: record,
+    signing: {
+      algorithm: 'ECDSA-P256',
+      publicKeyJwk: record.publicKeyJwk,
+      keyId: record.keyId ?? 'signing-key',
+      fingerprint: record.fingerprint,
+    },
+  }
+}
+
+function debugSecure(event: string, details?: Record<string, unknown>): void {
+  if (!(globalThis as any).__PLAT_CSS_DEBUG_SECURE) return
+  console.debug(`[plat-css secure] ${event}`, details ?? {})
 }
 
 function deferred<T>() {

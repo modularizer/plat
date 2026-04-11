@@ -4,6 +4,7 @@ export interface ClientSideServerAddress {
   serverName: string
   topic?: string
   peerId?: string
+  encryptionPublicKeyJwk?: JsonWebKey
   params: Record<string, string>
 }
 

@@ -89,6 +89,14 @@ export async function startPythonClientSideServerFromSource(
     connectionTimeoutMs: options.connectionTimeoutMs,
     announceIntervalMs: options.announceIntervalMs,
     clientIdPrefix: options.clientIdPrefix,
+    identity: options.identity,
+    secureSignaling: options.secureSignaling,
+    anonymousRouting: options.anonymousRouting,
+    sealedTopic: options.sealedTopic,
+    maxSealedMessageBytes: options.maxSealedMessageBytes,
+    replayWindowMs: options.replayWindowMs,
+    clockSkewToleranceMs: options.clockSkewToleranceMs,
+    serverEncryptionKeyPair: options.serverEncryptionKeyPair,
   })
 
   await signaler.start()

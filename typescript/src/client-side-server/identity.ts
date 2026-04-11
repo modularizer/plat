@@ -20,6 +20,27 @@ export interface ClientSideServerPublicIdentity {
   createdAt?: number
 }
 
+export interface ClientSideServerEncryptionKeyPair {
+  algorithm: 'X25519'
+  publicKeyJwk: JsonWebKey
+  privateKeyJwk: JsonWebKey
+  keyId: string
+  createdAt: number
+}
+
+export interface ClientSideServerEncryptionPublicIdentity {
+  algorithm: 'X25519'
+  publicKeyJwk: JsonWebKey
+  keyId: string
+  fingerprint: string
+  createdAt?: number
+}
+
+export interface ClientSideServerResolvedIdentityBundle {
+  signing: ClientSideServerPublicIdentity
+  encryption: ClientSideServerEncryptionPublicIdentity
+}
+
 export interface ClientSideServerTrustedServerRecord {
   serverName: string
   publicKeyJwk: JsonWebKey
@@ -28,6 +49,22 @@ export interface ClientSideServerTrustedServerRecord {
   trustedAt: number
   source: 'first-use' | 'authority' | 'manual'
 }
+
+export interface ClientSideServerTrustedServerRecordV2 {
+  serverName: string
+  signingPublicKeyJwk: JsonWebKey
+  encryptionPublicKeyJwk: JsonWebKey
+  signingKeyId?: string
+  encryptionKeyId?: string
+  signingFingerprint: string
+  encryptionFingerprint: string
+  trustedAt: number
+  source: 'first-use' | 'authority' | 'manual'
+}
+
+export type ClientSideServerAnyTrustedServerRecord =
+  | ClientSideServerTrustedServerRecord
+  | ClientSideServerTrustedServerRecordV2
 
 export interface ClientSideServerSignedAuthorityRecord {
   protocol: 'plat-css-authority-v1'
@@ -38,6 +75,22 @@ export interface ClientSideServerSignedAuthorityRecord {
   issuedAt: number
   signature: string
 }
+
+export interface ClientSideServerSignedAuthorityRecordV2 {
+  protocol: 'plat-css-authority-v2'
+  serverName: string
+  signingPublicKeyJwk: JsonWebKey
+  encryptionPublicKeyJwk: JsonWebKey
+  signingKeyId?: string
+  encryptionKeyId?: string
+  authorityName?: string
+  issuedAt: number
+  signature: string
+}
+
+export type ClientSideServerAnyAuthorityRecord =
+  | ClientSideServerSignedAuthorityRecord
+  | ClientSideServerSignedAuthorityRecordV2
 
 export interface GenerateClientSideServerKeyPairOptions {
   keyId?: string
@@ -67,13 +120,20 @@ export interface ClientSideServerAuthorityResolverOptions extends ClientSideServ
 export interface ClientSideServerAuthorityServer {
   authorityName?: string
   publicKeyJwk: JsonWebKey
-  resolve(serverName: string): Promise<ClientSideServerSignedAuthorityRecord | null>
+  resolve(serverName: string): Promise<ClientSideServerAnyAuthorityRecord | null>
 }
 
 export interface StaticClientSideServerAuthorityRegistryOptions {
   authorityKeyPair: ClientSideServerExportedKeyPair
   authorityName?: string
-  records?: Record<string, JsonWebKey | ClientSideServerPublicIdentity | ClientSideServerTrustedServerRecord>
+  records?: Record<
+    string,
+    | JsonWebKey
+    | ClientSideServerPublicIdentity
+    | ClientSideServerTrustedServerRecord
+    | ClientSideServerTrustedServerRecordV2
+    | ClientSideServerResolvedIdentityBundle
+  >
 }
 
 export interface FetchClientSideServerAuthorityServerOptions {
@@ -102,8 +162,8 @@ export function createInMemoryClientSideServerStorage(
 }
 
 export function saveTrustedClientSideServerRecordToMap(
-  knownHosts: Record<string, ClientSideServerTrustedServerRecord | ClientSideServerTrustedServerRecord[]>,
-  record: ClientSideServerTrustedServerRecord,
+  knownHosts: Record<string, ClientSideServerAnyTrustedServerRecord | ClientSideServerAnyTrustedServerRecord[]>,
+  record: ClientSideServerAnyTrustedServerRecord,
 ): void {
   const existing = knownHosts[record.serverName]
   if (!existing) {
@@ -112,7 +172,7 @@ export function saveTrustedClientSideServerRecordToMap(
   }
 
   const list = Array.isArray(existing) ? existing : [existing]
-  const idx = list.findIndex((r) => clientSideServerPublicKeysEqual(r.publicKeyJwk, record.publicKeyJwk))
+  const idx = list.findIndex((r) => clientSideServerPublicKeysEqual(getSigningPublicKeyJwk(r), getSigningPublicKeyJwk(record)))
   if (idx >= 0) {
     list[idx] = record
   } else {
@@ -122,9 +182,9 @@ export function saveTrustedClientSideServerRecordToMap(
 }
 
 export function loadTrustedClientSideServerRecordFromMap(
-  knownHosts: Record<string, ClientSideServerTrustedServerRecord | ClientSideServerTrustedServerRecord[]> | undefined,
+  knownHosts: Record<string, ClientSideServerAnyTrustedServerRecord | ClientSideServerAnyTrustedServerRecord[]> | undefined,
   serverName: string,
-): ClientSideServerTrustedServerRecord | null {
+): ClientSideServerAnyTrustedServerRecord | null {
   if (!knownHosts) return null
   const entry = knownHosts[serverName]
   if (!entry) return null
@@ -132,9 +192,9 @@ export function loadTrustedClientSideServerRecordFromMap(
 }
 
 export function loadAllTrustedClientSideServerRecordsForName(
-  knownHosts: Record<string, ClientSideServerTrustedServerRecord | ClientSideServerTrustedServerRecord[]> | undefined,
+  knownHosts: Record<string, ClientSideServerAnyTrustedServerRecord | ClientSideServerAnyTrustedServerRecord[]> | undefined,
   serverName: string,
-): ClientSideServerTrustedServerRecord[] {
+): ClientSideServerAnyTrustedServerRecord[] {
   if (!knownHosts) return []
   const entry = knownHosts[serverName]
   if (!entry) return []
@@ -142,12 +202,12 @@ export function loadAllTrustedClientSideServerRecordsForName(
 }
 
 export function isTrustedPublicKeyForServer(
-  knownHosts: Record<string, ClientSideServerTrustedServerRecord | ClientSideServerTrustedServerRecord[]> | undefined,
+  knownHosts: Record<string, ClientSideServerAnyTrustedServerRecord | ClientSideServerAnyTrustedServerRecord[]> | undefined,
   serverName: string,
   publicKeyJwk: JsonWebKey,
 ): boolean {
   const records = loadAllTrustedClientSideServerRecordsForName(knownHosts, serverName)
-  return records.some((r) => clientSideServerPublicKeysEqual(r.publicKeyJwk, publicKeyJwk))
+  return records.some((r) => clientSideServerPublicKeysEqual(getSigningPublicKeyJwk(r), publicKeyJwk))
 }
 
 export async function generateClientSideServerIdentityKeyPair(
@@ -178,7 +238,40 @@ export async function createClientSideServerKeyId(publicKeyJwk: JsonWebKey): Pro
   return `cssk-${fingerprint.slice(0, 16)}`
 }
 
+export async function generateClientSideServerEncryptionKeyPair(
+  options: GenerateClientSideServerKeyPairOptions = {},
+): Promise<ClientSideServerEncryptionKeyPair> {
+  const subtle = await resolveSubtle()
+  const keyPair = await subtle.generateKey(
+    {
+      name: 'X25519',
+    },
+    true,
+    ['deriveKey', 'deriveBits'],
+  )
+  const publicKeyJwk = await subtle.exportKey('jwk', keyPair.publicKey)
+  const privateKeyJwk = await subtle.exportKey('jwk', keyPair.privateKey)
+  return {
+    algorithm: 'X25519',
+    publicKeyJwk,
+    privateKeyJwk,
+    keyId: options.keyId ?? await createClientSideServerEncryptionKeyId(publicKeyJwk),
+    createdAt: Date.now(),
+  }
+}
+
+export async function createClientSideServerEncryptionKeyId(publicKeyJwk: JsonWebKey): Promise<string> {
+  const fingerprint = await getClientSideServerEncryptionPublicKeyFingerprint(publicKeyJwk)
+  return `csse-${fingerprint.slice(0, 16)}`
+}
+
 export async function getClientSideServerPublicKeyFingerprint(publicKeyJwk: JsonWebKey): Promise<string> {
+  const subtle = await resolveSubtle()
+  const digest = await subtle.digest('SHA-256', toBufferSource(encodeUtf8(stableStringify(publicKeyJwk))))
+  return base64UrlEncode(new Uint8Array(digest))
+}
+
+export async function getClientSideServerEncryptionPublicKeyFingerprint(publicKeyJwk: JsonWebKey): Promise<string> {
   const subtle = await resolveSubtle()
   const digest = await subtle.digest('SHA-256', toBufferSource(encodeUtf8(stableStringify(publicKeyJwk))))
   return base64UrlEncode(new Uint8Array(digest))
@@ -279,6 +372,53 @@ export async function verifySignedClientSideServerAuthorityRecord(
   return verifyClientSideServerChallenge(authorityPublicKeyJwk, stableStringify(payload), signature)
 }
 
+export async function createSignedClientSideServerAuthorityRecordV2(
+  authorityKeyPair: ClientSideServerExportedKeyPair,
+  input: {
+    serverName: string
+    signingPublicKeyJwk: JsonWebKey
+    encryptionPublicKeyJwk: JsonWebKey
+    signingKeyId?: string
+    encryptionKeyId?: string
+    authorityName?: string
+    issuedAt?: number
+  },
+): Promise<ClientSideServerSignedAuthorityRecordV2> {
+  const payload = {
+    protocol: 'plat-css-authority-v2' as const,
+    serverName: input.serverName,
+    signingPublicKeyJwk: input.signingPublicKeyJwk,
+    encryptionPublicKeyJwk: input.encryptionPublicKeyJwk,
+    signingKeyId: input.signingKeyId,
+    encryptionKeyId: input.encryptionKeyId,
+    authorityName: input.authorityName,
+    issuedAt: input.issuedAt ?? Date.now(),
+  }
+  const signature = await signClientSideServerChallenge(authorityKeyPair, stableStringify(payload))
+  return {
+    ...payload,
+    signature,
+  }
+}
+
+export async function verifySignedClientSideServerAuthorityRecordV2(
+  record: ClientSideServerSignedAuthorityRecordV2,
+  authorityPublicKeyJwk: JsonWebKey,
+): Promise<boolean> {
+  const { signature, ...payload } = record
+  if (payload.protocol !== 'plat-css-authority-v2') return false
+  return verifyClientSideServerChallenge(authorityPublicKeyJwk, stableStringify(payload), signature)
+}
+
+export async function verifyAnySignedClientSideServerAuthorityRecord(
+  record: ClientSideServerAnyAuthorityRecord,
+  authorityPublicKeyJwk: JsonWebKey,
+): Promise<boolean> {
+  return isClientSideServerSignedAuthorityRecordV2(record)
+    ? verifySignedClientSideServerAuthorityRecordV2(record, authorityPublicKeyJwk)
+    : verifySignedClientSideServerAuthorityRecord(record, authorityPublicKeyJwk)
+}
+
 export async function toClientSideServerPublicIdentity(
   keyPair: ClientSideServerExportedKeyPair,
 ): Promise<ClientSideServerPublicIdentity> {
@@ -288,6 +428,18 @@ export async function toClientSideServerPublicIdentity(
     keyId: keyPair.keyId,
     createdAt: keyPair.createdAt,
     fingerprint: await getClientSideServerPublicKeyFingerprint(keyPair.publicKeyJwk),
+  }
+}
+
+export async function toClientSideServerEncryptionPublicIdentity(
+  keyPair: ClientSideServerEncryptionKeyPair,
+): Promise<ClientSideServerEncryptionPublicIdentity> {
+  return {
+    algorithm: keyPair.algorithm,
+    publicKeyJwk: keyPair.publicKeyJwk,
+    keyId: keyPair.keyId,
+    createdAt: keyPair.createdAt,
+    fingerprint: await getClientSideServerEncryptionPublicKeyFingerprint(keyPair.publicKeyJwk),
   }
 }
 
@@ -323,8 +475,40 @@ export async function getOrCreateClientSideServerIdentityKeyPair(
   return created
 }
 
+export function saveClientSideServerEncryptionKeyPair(
+  keyPair: ClientSideServerEncryptionKeyPair,
+  options: ClientSideServerKeyPairStoreOptions = {},
+): void {
+  const storage = resolveStorage(options.storage)
+  if (!storage) throw new Error('No storage available to save a client-side server encryption key pair')
+  storage.setItem(options.storageKey ?? 'plat-css:enc-keypair', JSON.stringify(keyPair))
+}
+
+export function loadClientSideServerEncryptionKeyPair(
+  options: ClientSideServerKeyPairStoreOptions = {},
+): ClientSideServerEncryptionKeyPair | null {
+  const storage = resolveStorage(options.storage)
+  if (!storage) return null
+  const raw = storage.getItem(options.storageKey ?? 'plat-css:enc-keypair')
+  if (!raw) return null
+  return JSON.parse(raw) as ClientSideServerEncryptionKeyPair
+}
+
+export async function getOrCreateClientSideServerEncryptionKeyPair(
+  options: ClientSideServerKeyPairStoreOptions & GenerateClientSideServerKeyPairOptions = {},
+): Promise<ClientSideServerEncryptionKeyPair> {
+  const existing = loadClientSideServerEncryptionKeyPair(options)
+  if (existing) return existing
+  const created = await generateClientSideServerEncryptionKeyPair(options)
+  const storage = resolveStorage(options.storage)
+  if (storage) {
+    storage.setItem(options.storageKey ?? 'plat-css:enc-keypair', JSON.stringify(created))
+  }
+  return created
+}
+
 export function saveTrustedClientSideServerRecord(
-  record: ClientSideServerTrustedServerRecord,
+  record: ClientSideServerAnyTrustedServerRecord,
   options: ClientSideServerKnownHostsStoreOptions = {},
 ): void {
   const storage = resolveStorage(options.storage)
@@ -337,23 +521,23 @@ export function saveTrustedClientSideServerRecord(
 export function loadTrustedClientSideServerRecord(
   serverName: string,
   options: ClientSideServerKnownHostsStoreOptions = {},
-): ClientSideServerTrustedServerRecord | null {
+): ClientSideServerAnyTrustedServerRecord | null {
   const all = loadAllTrustedClientSideServerRecords(options)
   return all[serverName] ?? null
 }
 
 export function loadAllTrustedClientSideServerRecords(
   options: ClientSideServerKnownHostsStoreOptions = {},
-): Record<string, ClientSideServerTrustedServerRecord> {
+): Record<string, ClientSideServerAnyTrustedServerRecord> {
   const storage = resolveStorage(options.storage)
   if (!storage) return {}
   const raw = storage.getItem(options.storageKey ?? 'plat-css:known-hosts')
   if (!raw) return {}
-  return JSON.parse(raw) as Record<string, ClientSideServerTrustedServerRecord>
+  return JSON.parse(raw) as Record<string, ClientSideServerAnyTrustedServerRecord>
 }
 
 export function saveClientSideServerAuthorityRecord(
-  record: ClientSideServerSignedAuthorityRecord,
+  record: ClientSideServerAnyAuthorityRecord,
   options: ClientSideServerAuthorityStoreOptions = {},
 ): void {
   const storage = resolveStorage(options.storage)
@@ -366,19 +550,19 @@ export function saveClientSideServerAuthorityRecord(
 export function loadClientSideServerAuthorityRecord(
   serverName: string,
   options: ClientSideServerAuthorityStoreOptions = {},
-): ClientSideServerSignedAuthorityRecord | null {
+): ClientSideServerAnyAuthorityRecord | null {
   const all = loadAllClientSideServerAuthorityRecords(options)
   return all[serverName] ?? null
 }
 
 export function loadAllClientSideServerAuthorityRecords(
   options: ClientSideServerAuthorityStoreOptions = {},
-): Record<string, ClientSideServerSignedAuthorityRecord> {
+): Record<string, ClientSideServerAnyAuthorityRecord> {
   const storage = resolveStorage(options.storage)
   if (!storage) return {}
   const raw = storage.getItem(options.storageKey ?? 'plat-css:authority-records')
   if (!raw) return {}
-  return JSON.parse(raw) as Record<string, ClientSideServerSignedAuthorityRecord>
+  return JSON.parse(raw) as Record<string, ClientSideServerAnyAuthorityRecord>
 }
 
 export async function trustClientSideServerOnFirstUse(
@@ -399,29 +583,41 @@ export async function trustClientSideServerOnFirstUse(
 }
 
 export async function trustClientSideServerFromAuthorityRecord(
-  record: ClientSideServerSignedAuthorityRecord,
+  record: ClientSideServerAnyAuthorityRecord,
   authorityPublicKeyJwk: JsonWebKey,
   options: ClientSideServerKnownHostsStoreOptions = {},
-): Promise<ClientSideServerTrustedServerRecord> {
-  const valid = await verifySignedClientSideServerAuthorityRecord(record, authorityPublicKeyJwk)
+): Promise<ClientSideServerAnyTrustedServerRecord> {
+  const valid = await verifyAnySignedClientSideServerAuthorityRecord(record, authorityPublicKeyJwk)
   if (!valid) {
     throw new Error(`Authority record for ${record.serverName} failed signature verification`)
   }
-  const trusted: ClientSideServerTrustedServerRecord = {
-    serverName: record.serverName,
-    publicKeyJwk: record.publicKeyJwk,
-    keyId: record.keyId,
-    fingerprint: await getClientSideServerPublicKeyFingerprint(record.publicKeyJwk),
-    trustedAt: Date.now(),
-    source: 'authority',
-  }
+  const trusted: ClientSideServerAnyTrustedServerRecord = isClientSideServerSignedAuthorityRecordV2(record)
+    ? {
+        serverName: record.serverName,
+        signingPublicKeyJwk: record.signingPublicKeyJwk,
+        encryptionPublicKeyJwk: record.encryptionPublicKeyJwk,
+        signingKeyId: record.signingKeyId,
+        encryptionKeyId: record.encryptionKeyId,
+        signingFingerprint: await getClientSideServerPublicKeyFingerprint(record.signingPublicKeyJwk),
+        encryptionFingerprint: await getClientSideServerEncryptionPublicKeyFingerprint(record.encryptionPublicKeyJwk),
+        trustedAt: Date.now(),
+        source: 'authority',
+      }
+    : {
+        serverName: record.serverName,
+        publicKeyJwk: record.publicKeyJwk,
+        keyId: record.keyId,
+        fingerprint: await getClientSideServerPublicKeyFingerprint(record.publicKeyJwk),
+        trustedAt: Date.now(),
+        source: 'authority',
+      }
   saveTrustedClientSideServerRecord(trusted, options)
   return trusted
 }
 
 export function createClientSideServerAuthorityResolver(
   options: ClientSideServerAuthorityResolverOptions,
-): (serverName: string) => Promise<ClientSideServerTrustedServerRecord | null> {
+): (serverName: string) => Promise<ClientSideServerAnyTrustedServerRecord | null> {
   return async (serverName: string) => {
     const record = loadClientSideServerAuthorityRecord(serverName, options)
     if (!record) return null
@@ -439,39 +635,67 @@ export function createClientSideServerAuthorityResolver(
 export function createStaticClientSideServerAuthorityRegistry(
   options: StaticClientSideServerAuthorityRegistryOptions,
 ): {
-  register(serverName: string, value: JsonWebKey | ClientSideServerPublicIdentity | ClientSideServerTrustedServerRecord): void
-  resolve(serverName: string): Promise<ClientSideServerSignedAuthorityRecord | null>
+  register(
+    serverName: string,
+    value:
+      | JsonWebKey
+      | ClientSideServerPublicIdentity
+      | ClientSideServerTrustedServerRecord
+      | ClientSideServerTrustedServerRecordV2
+      | ClientSideServerResolvedIdentityBundle,
+  ): void
+  resolve(serverName: string): Promise<ClientSideServerAnyAuthorityRecord | null>
   createServer(): ClientSideServerAuthorityServer
 } {
-  const records = new Map<string, JsonWebKey>()
+  const records = new Map<string, NormalizedAuthorityIdentityRecord>()
   for (const [serverName, value] of Object.entries(options.records ?? {})) {
-    records.set(serverName, normalizePublicKey(value))
+    records.set(serverName, normalizeAuthorityIdentity(value))
   }
   return {
     register(serverName, value) {
-      records.set(serverName, normalizePublicKey(value))
+      records.set(serverName, normalizeAuthorityIdentity(value))
     },
     async resolve(serverName) {
-      const publicKeyJwk = records.get(serverName)
-      if (!publicKeyJwk) return null
-      return createSignedClientSideServerAuthorityRecord(options.authorityKeyPair, {
-        serverName,
-        publicKeyJwk,
-        authorityName: options.authorityName,
-      })
+      const record = records.get(serverName)
+      if (!record) return null
+      return record.encryptionPublicKeyJwk
+        ? createSignedClientSideServerAuthorityRecordV2(options.authorityKeyPair, {
+            serverName,
+            signingPublicKeyJwk: record.signingPublicKeyJwk,
+            encryptionPublicKeyJwk: record.encryptionPublicKeyJwk,
+            signingKeyId: record.signingKeyId,
+            encryptionKeyId: record.encryptionKeyId,
+            authorityName: options.authorityName,
+          })
+        : createSignedClientSideServerAuthorityRecord(options.authorityKeyPair, {
+            serverName,
+            publicKeyJwk: record.signingPublicKeyJwk,
+            keyId: record.signingKeyId,
+            authorityName: options.authorityName,
+          })
     },
     createServer() {
       return {
         authorityName: options.authorityName,
         publicKeyJwk: options.authorityKeyPair.publicKeyJwk,
         resolve: async (serverName: string) => {
-          const publicKeyJwk = records.get(serverName)
-          if (!publicKeyJwk) return null
-          return createSignedClientSideServerAuthorityRecord(options.authorityKeyPair, {
-            serverName,
-            publicKeyJwk,
-            authorityName: options.authorityName,
-          })
+          const record = records.get(serverName)
+          if (!record) return null
+          return record.encryptionPublicKeyJwk
+            ? createSignedClientSideServerAuthorityRecordV2(options.authorityKeyPair, {
+                serverName,
+                signingPublicKeyJwk: record.signingPublicKeyJwk,
+                encryptionPublicKeyJwk: record.encryptionPublicKeyJwk,
+                signingKeyId: record.signingKeyId,
+                encryptionKeyId: record.encryptionKeyId,
+                authorityName: options.authorityName,
+              })
+            : createSignedClientSideServerAuthorityRecord(options.authorityKeyPair, {
+                serverName,
+                publicKeyJwk: record.signingPublicKeyJwk,
+                keyId: record.signingKeyId,
+                authorityName: options.authorityName,
+              })
         },
       }
     },
@@ -501,7 +725,7 @@ export function createFetchClientSideServerAuthorityServer(
       if (!response.ok) {
         throw new Error(`Authority server ${baseUrl} returned ${response.status} ${response.statusText}`)
       }
-      const record = await response.json() as ClientSideServerSignedAuthorityRecord | null
+      const record = await response.json() as ClientSideServerAnyAuthorityRecord | null
       return record
     },
   }
@@ -511,7 +735,7 @@ export async function resolveTrustedClientSideServerFromAuthorities(
   serverName: string,
   authorityServers: ClientSideServerAuthorityServer[],
   options: ClientSideServerKnownHostsStoreOptions = {},
-): Promise<ClientSideServerTrustedServerRecord | null> {
+): Promise<ClientSideServerAnyTrustedServerRecord | null> {
   for (const authorityServer of authorityServers) {
     try {
       const record = await authorityServer.resolve(serverName)
@@ -528,17 +752,108 @@ export function clientSideServerPublicKeysEqual(a: JsonWebKey, b: JsonWebKey): b
   return stableStringify(a) === stableStringify(b)
 }
 
+export function isClientSideServerTrustedServerRecordV2(
+  value: ClientSideServerAnyTrustedServerRecord | unknown,
+): value is ClientSideServerTrustedServerRecordV2 {
+  return Boolean(
+    value
+      && typeof value === 'object'
+      && 'signingPublicKeyJwk' in value
+      && 'encryptionPublicKeyJwk' in value,
+  )
+}
+
+export function isClientSideServerSignedAuthorityRecordV2(
+  value: ClientSideServerAnyAuthorityRecord | unknown,
+): value is ClientSideServerSignedAuthorityRecordV2 {
+  return Boolean(
+    value
+      && typeof value === 'object'
+      && (value as ClientSideServerSignedAuthorityRecordV2).protocol === 'plat-css-authority-v2'
+      && 'signingPublicKeyJwk' in value
+      && 'encryptionPublicKeyJwk' in value,
+  )
+}
+
+export async function trustedClientSideServerRecordToResolvedIdentityBundle(
+  record: ClientSideServerAnyTrustedServerRecord,
+): Promise<ClientSideServerResolvedIdentityBundle | null> {
+  if (!isClientSideServerTrustedServerRecordV2(record)) return null
+  return {
+    signing: {
+      algorithm: 'ECDSA-P256',
+      publicKeyJwk: record.signingPublicKeyJwk,
+      keyId: record.signingKeyId ?? await createClientSideServerKeyId(record.signingPublicKeyJwk),
+      fingerprint: record.signingFingerprint,
+    },
+    encryption: {
+      algorithm: 'X25519',
+      publicKeyJwk: record.encryptionPublicKeyJwk,
+      keyId: record.encryptionKeyId ?? await createClientSideServerEncryptionKeyId(record.encryptionPublicKeyJwk),
+      fingerprint: record.encryptionFingerprint,
+    },
+  }
+}
+
 function resolveStorage(storage?: ClientSideServerStorageLike): ClientSideServerStorageLike | null {
   if (storage) return storage
   if (typeof localStorage !== 'undefined') return localStorage
   return null
 }
 
-function normalizePublicKey(
-  value: JsonWebKey | ClientSideServerPublicIdentity | ClientSideServerTrustedServerRecord,
-): JsonWebKey {
-  if ('publicKeyJwk' in value) return value.publicKeyJwk
-  return value
+function getSigningPublicKeyJwk(record: ClientSideServerAnyTrustedServerRecord): JsonWebKey {
+  return isClientSideServerTrustedServerRecordV2(record) ? record.signingPublicKeyJwk : record.publicKeyJwk
+}
+
+interface NormalizedAuthorityIdentityRecord {
+  signingPublicKeyJwk: JsonWebKey
+  encryptionPublicKeyJwk?: JsonWebKey
+  signingKeyId?: string
+  encryptionKeyId?: string
+}
+
+function normalizeAuthorityIdentity(
+  value:
+    | JsonWebKey
+    | ClientSideServerPublicIdentity
+    | ClientSideServerTrustedServerRecord
+    | ClientSideServerTrustedServerRecordV2
+    | ClientSideServerResolvedIdentityBundle,
+): NormalizedAuthorityIdentityRecord {
+  if (isResolvedIdentityBundle(value)) {
+    return {
+      signingPublicKeyJwk: value.signing.publicKeyJwk,
+      encryptionPublicKeyJwk: value.encryption.publicKeyJwk,
+      signingKeyId: value.signing.keyId,
+      encryptionKeyId: value.encryption.keyId,
+    }
+  }
+  if (isClientSideServerTrustedServerRecordV2(value)) {
+    return {
+      signingPublicKeyJwk: value.signingPublicKeyJwk,
+      encryptionPublicKeyJwk: value.encryptionPublicKeyJwk,
+      signingKeyId: value.signingKeyId,
+      encryptionKeyId: value.encryptionKeyId,
+    }
+  }
+  if ('publicKeyJwk' in value) {
+    return {
+      signingPublicKeyJwk: value.publicKeyJwk,
+      signingKeyId: 'keyId' in value ? value.keyId : undefined,
+    }
+  }
+  return {
+    signingPublicKeyJwk: value,
+  }
+}
+
+function isResolvedIdentityBundle(value: unknown): value is ClientSideServerResolvedIdentityBundle {
+  return Boolean(
+    value
+      && typeof value === 'object'
+      && 'signing' in value
+      && 'encryption' in value,
+  )
 }
 
 function stableStringify(value: unknown): string {
