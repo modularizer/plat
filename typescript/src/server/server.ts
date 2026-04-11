@@ -1299,7 +1299,7 @@ export class PLATServer {
             openapi: '3.1.0',
             info: {
                 title: 'plat API',
-                version: '0.8.0',
+                version: '0.9.0',
             },
             paths,
         }
