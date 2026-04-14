@@ -11,8 +11,13 @@ interface BinaryFileMetaMessage {
   jsonrpc: '2.0'
   id: string
   ok: true
+  byteLength: number
   result: Record<string, unknown>
 }
+
+// Stay well below the common WebRTC SCTP maxMessageSize (~256 KB). Chrome's
+// default is 262144, Firefox 1073741823. 64 KB leaves headroom for both.
+const BINARY_CHUNK_SIZE = 64 * 1024
 
 function toUint8Array(value: unknown): Uint8Array | null {
   if (value instanceof Uint8Array) return value
@@ -33,6 +38,7 @@ function splitBinaryFileMessage(message: unknown): { meta: BinaryFileMetaMessage
     jsonrpc: '2.0',
     id: String(m.id ?? ''),
     ok: true,
+    byteLength: bytes.byteLength,
     result: {
       ...m.result,
       content: null,
@@ -40,6 +46,46 @@ function splitBinaryFileMessage(message: unknown): { meta: BinaryFileMetaMessage
     },
   }
   return { meta, bytes }
+}
+
+function chunkBytes(bytes: Uint8Array): Uint8Array[] {
+  if (bytes.byteLength <= BINARY_CHUNK_SIZE) return [bytes]
+  const chunks: Uint8Array[] = []
+  for (let offset = 0; offset < bytes.byteLength; offset += BINARY_CHUNK_SIZE) {
+    const end = Math.min(offset + BINARY_CHUNK_SIZE, bytes.byteLength)
+    chunks.push(bytes.subarray(offset, end))
+  }
+  return chunks
+}
+
+interface BinaryAssembly {
+  meta: BinaryFileMetaMessage
+  received: Uint8Array
+  offset: number
+}
+
+function createAssembler() {
+  let current: BinaryAssembly | null = null
+  const queue: BinaryFileMetaMessage[] = []
+
+  const start = (meta: BinaryFileMetaMessage) => {
+    if (current) { queue.push(meta); return }
+    current = { meta, received: new Uint8Array(meta.byteLength), offset: 0 }
+  }
+
+  const push = (bytes: Uint8Array): BinaryAssembly | null => {
+    if (!current) return null
+    current.received.set(bytes, current.offset)
+    current.offset += bytes.byteLength
+    if (current.offset < current.meta.byteLength) return null
+    const done = current
+    current = null
+    const next = queue.shift()
+    if (next) current = { meta: next, received: new Uint8Array(next.byteLength), offset: 0 }
+    return done
+  }
+
+  return { start, push }
 }
 
 function isBinaryFileMetaMessage(message: unknown): message is BinaryFileMetaMessage {
@@ -52,30 +98,54 @@ function isBinaryFileMetaMessage(message: unknown): message is BinaryFileMetaMes
   )
 }
 
-export function createRTCDataChannelAdapter(channel: RTCDataChannel): ClientSideServerChannel {
-  const pendingBinaryMeta: BinaryFileMetaMessage[] = []
+const BUFFERED_AMOUNT_HIGH_WATER = 1 * 1024 * 1024
+const BUFFERED_AMOUNT_LOW_WATER = 256 * 1024
 
-  const emitBinary = (raw: ArrayBuffer | Uint8Array, listener: (message: ClientSideServerMessage) => void | Promise<void>) => {
-    const meta = pendingBinaryMeta.shift()
-    if (!meta) return
-    const bytes = raw instanceof Uint8Array ? raw : new Uint8Array(raw)
+function waitForDrain(channel: RTCDataChannel): Promise<void> {
+  if (channel.bufferedAmount <= BUFFERED_AMOUNT_LOW_WATER) return Promise.resolve()
+  return new Promise<void>((resolve) => {
+    const prev = channel.bufferedAmountLowThreshold
+    channel.bufferedAmountLowThreshold = BUFFERED_AMOUNT_LOW_WATER
+    const onLow = () => {
+      channel.removeEventListener('bufferedamountlow', onLow)
+      channel.bufferedAmountLowThreshold = prev
+      resolve()
+    }
+    channel.addEventListener('bufferedamountlow', onLow)
+  })
+}
+
+export function createRTCDataChannelAdapter(channel: RTCDataChannel): ClientSideServerChannel {
+  // Default binaryType is 'blob' in Chrome — blob.arrayBuffer() is async, which
+  // races chunks out of order. Force synchronous ArrayBuffer delivery.
+  channel.binaryType = 'arraybuffer'
+
+  const assembler = createAssembler()
+
+  const emitAssembled = (done: BinaryAssembly, listener: (message: ClientSideServerMessage) => void | Promise<void>) => {
     const reconstructed = {
-      ...meta,
+      ...done.meta,
       result: {
-        ...meta.result,
-        content: bytes,
+        ...done.meta.result,
+        content: done.received,
       },
     }
     void listener(reconstructed as ClientSideServerMessage)
   }
 
   return {
-    send(message) {
+    async send(message) {
       const binary = splitBinaryFileMessage(message)
       if (binary) {
         channel.send(JSON.stringify(binary.meta))
-        const payload = Uint8Array.from(binary.bytes) as Uint8Array<ArrayBuffer>
-        channel.send(payload)
+        for (const chunk of chunkBytes(binary.bytes)) {
+          if (channel.bufferedAmount > BUFFERED_AMOUNT_HIGH_WATER) {
+            await waitForDrain(channel)
+          }
+          const standalone = new Uint8Array(chunk.byteLength)
+          standalone.set(chunk)
+          channel.send(standalone as Uint8Array<ArrayBuffer>)
+        }
         return
       }
       channel.send(JSON.stringify(message))
@@ -85,23 +155,23 @@ export function createRTCDataChannelAdapter(channel: RTCDataChannel): ClientSide
         if (typeof event.data === 'string') {
           const parsed = JSON.parse(event.data)
           if (isBinaryFileMetaMessage(parsed)) {
-            pendingBinaryMeta.push(parsed)
+            assembler.start(parsed)
             return
           }
           void listener(parsed as ClientSideServerMessage)
           return
         }
         if (event.data instanceof ArrayBuffer) {
-          emitBinary(event.data, listener)
+          const done = assembler.push(new Uint8Array(event.data))
+          if (done) emitAssembled(done, listener)
           return
         }
         if (event.data instanceof Blob) {
-          void event.data.arrayBuffer().then((buffer) => emitBinary(buffer, listener))
+          // Shouldn't happen — we set binaryType='arraybuffer' above — but keep
+          // a safe synchronous fallback that preserves order via a chain.
+          console.warn('[plat channel] unexpected Blob data; ordering fallback')
           return
         }
-        const raw = String(event.data)
-        const parsed = JSON.parse(raw)
-        void listener(parsed as ClientSideServerMessage)
       }
       channel.addEventListener('message', onMessage)
       return () => channel.removeEventListener('message', onMessage)
@@ -121,14 +191,18 @@ export function createWeriftDataChannelAdapter(
     }
   },
 ): ClientSideServerChannel {
-  const pendingBinaryMeta: BinaryFileMetaMessage[] = []
+  const assembler = createAssembler()
 
   return {
     send(message) {
       const binary = splitBinaryFileMessage(message)
       if (binary) {
         channel.send(JSON.stringify(binary.meta))
-        channel.send(binary.bytes)
+        for (const chunk of chunkBytes(binary.bytes)) {
+          const standalone = new Uint8Array(chunk.byteLength)
+          standalone.set(chunk)
+          channel.send(standalone)
+        }
         return
       }
       channel.send(JSON.stringify(message))
@@ -138,29 +212,26 @@ export function createWeriftDataChannelAdapter(
         if (typeof data === 'string') {
           const parsed = JSON.parse(data)
           if (isBinaryFileMetaMessage(parsed)) {
-            pendingBinaryMeta.push(parsed)
+            assembler.start(parsed)
             return
           }
           void listener(parsed as ClientSideServerMessage)
           return
         }
 
-        const meta = pendingBinaryMeta.shift()
-        if (meta) {
-          const bytes = data instanceof Uint8Array ? data : new Uint8Array(data)
+        const bytes = data instanceof Uint8Array ? data : new Uint8Array(data)
+        const done = assembler.push(bytes)
+        if (done) {
           const reconstructed = {
-            ...meta,
+            ...done.meta,
             result: {
-              ...meta.result,
-              content: bytes,
+              ...done.meta.result,
+              content: done.received,
             },
           }
           void listener(reconstructed as ClientSideServerMessage)
           return
         }
-
-        const raw = data.toString('utf8')
-        void listener(JSON.parse(raw) as ClientSideServerMessage)
       })
       return () => {
         subscription.unSubscribe()

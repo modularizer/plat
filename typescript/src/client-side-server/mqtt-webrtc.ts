@@ -543,6 +543,17 @@ export class ClientSideServerMQTTWebRTCServer {
     }
   }
 
+  /**
+   * Send a message to every currently-connected channel. Used to push
+   * server-originated events (e.g. "files changed") to subscribers.
+   */
+  async broadcast(message: unknown): Promise<void> {
+    for (const channel of this.channels.values()) {
+      try { await channel.send(message as any) }
+      catch (err) { console.warn('[plat-css] broadcast to channel failed', err) }
+    }
+  }
+
   async drain(): Promise<void> {
     if (this.options.workerInfo) {
       this.options.workerInfo.acceptingNewClients = false
