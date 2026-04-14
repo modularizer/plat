@@ -8,6 +8,8 @@ export interface ClientSideServerAddress {
   params: Record<string, string>
 }
 
+export type ClientSideServerMode = 'dmz' | 'authority'
+
 export function parseClientSideServerAddress(input: string): ClientSideServerAddress {
   const url = new URL(input)
   if (url.protocol !== 'css:') {
@@ -28,3 +30,25 @@ export function parseClientSideServerAddress(input: string): ClientSideServerAdd
     params,
   }
 }
+
+export function getClientSideServerMode(
+  input: string | Pick<ClientSideServerAddress, 'serverName'>,
+): ClientSideServerMode {
+  const serverName = typeof input === 'string'
+    ? parseClientSideServerAddress(input).serverName
+    : input.serverName
+  return serverName.startsWith('dmz/') ? 'dmz' : 'authority'
+}
+
+export function isAuthorityClientSideServerAddress(
+  input: string | Pick<ClientSideServerAddress, 'serverName'>,
+): boolean {
+  return getClientSideServerMode(input) === 'authority'
+}
+
+export function isDmzClientSideServerAddress(
+  input: string | Pick<ClientSideServerAddress, 'serverName'>,
+): boolean {
+  return getClientSideServerMode(input) === 'dmz'
+}
+

@@ -1,8 +1,10 @@
 import { ClientError, ServerError } from '../types/errors'
 import type { PLATRPCMessage, PLATRPCRequest, PLATRPCResponse } from '../rpc'
 import {
+  getClientSideServerMode,
   parseClientSideServerAddress,
   type ClientSideServerAddress,
+  type ClientSideServerMode,
 } from '../client-side-server/signaling'
 import type { ClientSideServerChannel } from '../client-side-server/channel'
 import type {
@@ -13,6 +15,7 @@ import type {
 
 export interface ClientSideServerConnectContext {
   address: ClientSideServerAddress
+  mode: ClientSideServerMode
   request: OpenAPIClientTransportRequest
 }
 
@@ -34,7 +37,7 @@ export function createClientSideServerTransportPlugin(
     canHandle: ({ baseUrl, transportMode }) => transportMode === 'css' || baseUrl.startsWith('css://'),
     async connect(request) {
       const address = parseClientSideServerAddress(request.baseUrl)
-      const channel = await options.connect({ address, request })
+      const channel = await options.connect({ address, mode: getClientSideServerMode(address), request })
       return { channel }
     },
     async sendRequest(connection, request) {

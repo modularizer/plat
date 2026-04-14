@@ -125,6 +125,7 @@ function serviceWorkerRuntime() {
 
   // Interception logic (matches main thread)
   function shouldIntercept(url: string): boolean {
+      console.log("shouldIntercept", url)
     if (url.startsWith('data:') || url.startsWith('blob:') || url.startsWith('javascript:')) return false
     if (url.startsWith('css://')) return true
     try {
@@ -307,35 +308,4 @@ function serviceWorkerRuntime() {
     self.skipWaiting()
   })
 }
-
-// ── Shared helpers ───────────────────────────────────────────────────────────
-
-function shouldIntercept(url: string): boolean {
-  if (url.startsWith('data:') || url.startsWith('blob:') || url.startsWith('javascript:')) return false
-  if (url.startsWith('/') || !url.includes('://')) return true
-  if (url.startsWith('css://')) return true
-  try {
-    const parsed = new URL(url, window.location.href)
-    return parsed.origin === window.location.origin
-  } catch {
-    return false
-  }
-}
-
-function normalizePath(url: string): string {
-  if (url.startsWith('css://')) {
-    try {
-      const parsed = new URL(url.replace('css://', 'http://'))
-      return `${parsed.pathname}${parsed.search}`
-    } catch { return url }
-  }
-  if (url.startsWith('/')) return url
-  try {
-    const parsed = new URL(url, typeof window !== 'undefined' ? window.location.href : 'http://localhost/')
-    return `${parsed.pathname}${parsed.search}`
-  } catch {
-    return '/' + url
-  }
-}
-
 

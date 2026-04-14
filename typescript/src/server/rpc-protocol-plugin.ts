@@ -50,13 +50,23 @@ export function attachRpcProtocolPlugin(
   const activeRpcCalls = new Map<string, AbortController>()
 
   const server = host.server as HttpServer
-  const wss = new WebSocketServer({ server, path: rpcPath })
+  const wss = new WebSocketServer({ noServer: true })
+
+  const onUpgrade = (req: import('node:http').IncomingMessage, socket: import('node:net').Socket, head: Buffer) => {
+    const path = (req.url ?? '/').split('?')[0] || '/'
+    if (path !== rpcPath) return
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      wss.emit('connection', ws, req)
+    })
+  }
+  server.on('upgrade', onUpgrade)
 
   // Store for teardown
   const originalTeardown = plugin.teardown
   plugin.teardown = async (runtime) => {
     for (const ac of activeRpcCalls.values()) ac.abort()
     activeRpcCalls.clear()
+    server.off('upgrade', onUpgrade)
     wss.close()
     await originalTeardown?.(runtime)
   }

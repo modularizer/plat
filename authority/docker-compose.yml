@@ -1,0 +1,89 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-plat}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-plat}
+      POSTGRES_DB: ${POSTGRES_DB:-plat_authority}
+    volumes:
+      - plat-postgres-data:/var/lib/postgresql/data
+      - ./docker/init-db.sh:/docker-entrypoint-initdb.d/01-init.sh
+    networks:
+      - plat-internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-plat} -d ${POSTGRES_DB:-plat_authority}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --save "" --appendonly no
+    networks:
+      - plat-internal
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  authority:
+    build:
+      context: ..
+      dockerfile: authority/docker/Dockerfile
+    environment:
+      PORT: ${PORT:-3000}
+      NODE_ENV: ${NODE_ENV:-development}
+      AUTHORITY_URL: ${AUTHORITY_URL:-http://localhost:3000}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-plat}:${POSTGRES_PASSWORD:-plat}@postgres:5432/${POSTGRES_DB:-plat_authority}
+      REDIS_URL: redis://redis:6379
+      STORAGE_TYPE: ${STORAGE_TYPE:-drizzle}
+      STORAGE_PATH: ${STORAGE_PATH:-}
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-dev-token-change-in-production}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET:-}
+      GOOGLE_OAUTH_REDIRECT_URI: ${GOOGLE_OAUTH_REDIRECT_URI:-}
+      HOST_AUTH_MODE: ${HOST_AUTH_MODE:-insecure_token_sub}
+      OAUTH_ALLOWED_REDIRECT_ORIGINS: ${OAUTH_ALLOWED_REDIRECT_ORIGINS:-http://localhost:3001}
+      TRACEBACK_MAX_LINES: ${TRACEBACK_MAX_LINES:-0}
+    ports:
+      - "${PORT:-3000}:${PORT:-3000}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - plat-internal
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:${PORT:-3000}/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - ./src:/app/src:ro
+      - ./dist:/app/dist
+      - ./data:/app/data
+
+  admin-dashboard:
+    build:
+      context: ..
+      dockerfile: authority/admin/Dockerfile
+    environment:
+      VITE_API_URL: ${VITE_API_URL:-http://localhost:${PORT:-3000}}
+    ports:
+      - "${ADMIN_PORT:-3001}:3001"
+    depends_on:
+      authority:
+        condition: service_healthy
+    networks:
+      - plat-internal
+
+volumes:
+  plat-postgres-data:
+
+networks:
+  plat-internal:
+    driver: bridge

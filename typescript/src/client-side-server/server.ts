@@ -256,7 +256,7 @@ export class PLATClientSideServer {
         if (staticResult === null) {
           await channel.send({ jsonrpc: '2.0', id: message.id, ok: false, error: { status: 404, message: 'Not found' } })
         } else {
-          await channel.send({ jsonrpc: '2.0', id: message.id, ok: true, result: await this.serializeFileResponse(staticResult) })
+          await channel.send({ jsonrpc: '2.0', id: message.id, ok: true, result: await this.serializeFileResponse(staticResult, message.headers) })
         }
         return
       }
@@ -288,7 +288,7 @@ export class PLATClientSideServer {
           jsonrpc: '2.0',
           id: message.id,
           ok: true,
-          result: await this.serializeFileResponse(result),
+          result: await this.serializeFileResponse(result, message.headers),
         })
       } else {
         await channel.send({
@@ -629,16 +629,36 @@ export class PLATClientSideServer {
     return undefined // No static folder matched this path
   }
 
-  private async serializeFileResponse(fileResponse: FileResponse): Promise<Record<string, any>> {
+  private async serializeFileResponse(
+    fileResponse: FileResponse,
+    requestHeaders?: Record<string, string>,
+  ): Promise<Record<string, any>> {
     const content = await fileResponse.getContent()
-    const bytes = typeof content === 'string' ? new TextEncoder().encode(content) : content
+    const bytes: Uint8Array = typeof content === 'string' ? new TextEncoder().encode(content) : content
+
+    const etag = await computeFileEtag(bytes)
+    const headers: Record<string, string> = { ...fileResponse.headers, etag }
+    if (fileResponse.maxAge !== undefined) {
+      headers['cache-control'] = `public, max-age=${fileResponse.maxAge}`
+    }
+
+    const ifNoneMatch = readHeader(requestHeaders, 'if-none-match')
+    if (ifNoneMatch && etagMatches(ifNoneMatch, etag)) {
+      return {
+        _type: 'file-not-modified',
+        filename: fileResponse.filename,
+        contentType: fileResponse.contentType,
+        headers,
+      }
+    }
+
     return {
       _type: 'file',
       filename: fileResponse.filename,
       contentType: fileResponse.contentType,
       content: bytes,
       contentEncoding: 'binary',
-      headers: fileResponse.headers,
+      headers,
     }
   }
 
@@ -732,3 +752,44 @@ function cssSortValue(value: unknown): unknown {
   return value
 }
 
+
+// ---------------------------------------------------------------------------
+// File caching helpers
+// ---------------------------------------------------------------------------
+
+async function computeFileEtag(bytes: Uint8Array): Promise<string> {
+  const subtle = (globalThis.crypto as Crypto | undefined)?.subtle
+  if (!subtle) {
+    // Fallback: weak ETag from byte length only. Should not happen on Node 20+
+    // or in any browser; included so this never throws in odd environments.
+    return `W/"len-${bytes.byteLength}"`
+  }
+  const buffer = bytes.buffer instanceof ArrayBuffer
+    ? bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
+    : new Uint8Array(bytes).buffer
+  const digest = await subtle.digest("SHA-256", buffer)
+  const view = new Uint8Array(digest)
+  let hex = ""
+  for (let i = 0; i < view.length; i += 1) hex += view[i]!.toString(16).padStart(2, "0")
+  return `"${hex}"`
+}
+
+function readHeader(
+  headers: Record<string, string> | undefined,
+  name: string,
+): string | undefined {
+  if (!headers) return undefined
+  const lower = name.toLowerCase()
+  for (const key of Object.keys(headers)) {
+    if (key.toLowerCase() === lower) return headers[key]
+  }
+  return undefined
+}
+
+function etagMatches(ifNoneMatch: string, etag: string): boolean {
+  // Honor `*` wildcard and comma-separated lists. Treat weak prefix (W/) as
+  // equivalent for this comparison since we only emit strong tags.
+  const candidates = ifNoneMatch.split(",").map((s) => s.trim()).filter(Boolean)
+  if (candidates.includes("*")) return true
+  return candidates.some((c) => c.replace(/^W\//, "") === etag.replace(/^W\//, ""))
+}

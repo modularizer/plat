@@ -1,5 +1,6 @@
 import jwt from 'jsonwebtoken'
 import type { AuthMode } from '../../types/endpoints'
+import { HttpError } from '../../types'
 
 export interface JwtAuthConfig {
   secret: string
@@ -95,7 +96,6 @@ export function createJwtAuth(config: JwtAuthConfig): AuthHandler {
 
       const token = extractToken(req, config)
       if (!token) {
-        const { HttpError } = require('../http-error')
         throw new HttpError(401, 'Missing or invalid authorization token')
       }
 
@@ -110,7 +110,6 @@ export function createJwtAuth(config: JwtAuthConfig): AuthHandler {
         const payload = jwt.verify(token, config.secret, options)
         return payload
       } catch (err: any) {
-        const { HttpError } = require('../http-error')
         const statusCode = err.name === 'TokenExpiredError' ? 401 : 401
         throw new HttpError(statusCode, 'Invalid or expired token')
       }

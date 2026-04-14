@@ -88,6 +88,17 @@ export function createPlatFetch(options: PlatFetchOptions): typeof globalThis.fe
       return new Response(binary as any, { status: 200, statusText: 'OK', headers })
     }
 
+    // 304 Not Modified — server confirmed the cached ETag is still current.
+    // Return a body-less 304 so callers (e.g. service-worker caches) can
+    // serve their cached payload.
+    if (result && typeof result === 'object' && result._type === 'file-not-modified') {
+      const headers: Record<string, string> = {
+        'content-type': result.contentType ?? 'application/octet-stream',
+        ...(result.headers ?? {}),
+      }
+      return new Response(null, { status: 304, statusText: 'Not Modified', headers })
+    }
+
     // Regular JSON response
     const body = JSON.stringify(result)
     return new Response(body, {

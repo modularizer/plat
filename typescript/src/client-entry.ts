@@ -1,6 +1,7 @@
 export * from './client/css-transport-plugin'
 export * from './client/file-transport-plugin'
 export * from './client/http-transport-plugin'
+export * from './client/proxy'
 export * from './client/rpc-transport-plugin'
 export * from './client/tools'
 export * from './client/transport-plugin'

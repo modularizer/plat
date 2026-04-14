@@ -582,7 +582,9 @@ export class PLATServer {
                             helpRequested,
                         })
 
-                        this.applyResponseHeaders(res, ctx)
+                        if (!res.headersSent) {
+                            this.applyResponseHeaders(res, ctx)
+                        }
 
                         if (!res.headersSent) {
                             if (isFileResponse(execution.result)) {
