@@ -12,6 +12,8 @@ export const VERSION_FILES = [
   'typescript/package.json',
   'typescript/package-lock.json',
   'typescript_client/package.json',
+  'authority/package.json',
+  'authority/package-lock.json',
   'python/pyproject.toml',
   'typescript/src/server/server.ts',
   'typescript/src/client-side-server/server.ts',
@@ -74,6 +76,23 @@ export function bumpVersion(nextVersion) {
 
   updateJson('typescript_client/package.json', (data) => {
     data.version = nextVersion
+  }, touchedFiles)
+
+  updateJson('authority/package.json', (data) => {
+    data.version = nextVersion
+    if (data.dependencies?.['@modularizer/plat']) {
+      data.dependencies['@modularizer/plat'] = `^${nextVersion}`
+    }
+  }, touchedFiles)
+
+  updateJson('authority/package-lock.json', (data) => {
+    data.version = nextVersion
+    if (data.packages?.['']) {
+      data.packages[''].version = nextVersion
+      if (data.packages[''].dependencies?.['@modularizer/plat']) {
+        data.packages[''].dependencies['@modularizer/plat'] = `^${nextVersion}`
+      }
+    }
   }, touchedFiles)
 
   return touchedFiles

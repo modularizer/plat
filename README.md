@@ -54,4 +54,4 @@ That one method surface can become:
 
 
 ### Dev
-`node scripts/release.mjs "client-side server + docs site" 0.2.0 --publish`
+`node scripts/release.mjs "client-side server + docs site" 0.12.0 --publish`

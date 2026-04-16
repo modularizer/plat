@@ -4,7 +4,7 @@ import path from 'node:path'
 import process from 'node:process'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { bumpVersion, resolveNextVersion, VERSION_FILES } from './bump-version.mjs'
+import { bumpVersion, resolveNextVersion } from './bump-version.mjs'
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const args = process.argv.slice(2)
@@ -22,7 +22,7 @@ try {
   const nextVersion = resolveNextVersion(versionSpec)
   const touchedFiles = bumpVersion(nextVersion)
 
-  run('git', ['add', ...VERSION_FILES])
+  run('git', ['add', ...touchedFiles])
   run('git', ['commit', '-m', `release: ${nextVersion}`, '-m', releaseMessage])
   run('git', ['push'])
   run('gh', [

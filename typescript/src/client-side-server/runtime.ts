@@ -101,20 +101,6 @@ export async function runClientSideServer(
   const entryPoint = (options as any).sourceEntryPoint
   const normalizedSource = normalizeClientSideSourceImports(source)
 
-  const defaultTranspile = (src: string | Record<string, string>, ep?: string): string => {
-    const normalized = normalizeClientSideSourceImports(src)
-    if (typeof normalized === 'string') {
-      return ts.transpileModule(normalized, {
-        compilerOptions: {
-          module: ts.ModuleKind.ESNext,
-          target: ts.ScriptTarget.ES2022,
-          experimentalDecorators: true,
-        },
-      }).outputText
-    }
-    return transpileMultipleFiles(normalized, ts, ep)
-  }
-
   const defaultAnalyze = (src: string | Record<string, string>, ep?: string): ClientSideServerSourceAnalysis => {
     const normalized = normalizeClientSideSourceImports(src)
     if (typeof normalized === 'string') {
@@ -127,7 +113,10 @@ export async function runClientSideServer(
     ...rest,
     source: normalizedSource,
     sourceEntryPoint: entryPoint,
-    transpile: customTranspile ?? defaultTranspile,
+    // Only pass transpile if user provided a custom one. For multi-file sources
+    // without a custom transpiler, startClientSideServerFromSource uses the
+    // ESM blob-URL graph internally.
+    transpile: customTranspile,
     analyzeSource: customAnalyze ?? defaultAnalyze,
   })
 }
@@ -135,27 +124,20 @@ export async function runClientSideServer(
 /** @deprecated Use {@link runClientSideServer} */
 export const runClientSideServerFromSource = runClientSideServer
 
-function transpileSource(source: string | Record<string, string>, entryPoint?: string): string {
-  if (typeof source === 'string') {
-    return ts.transpileModule(source, {
-      compilerOptions: {
-        module: ts.ModuleKind.ESNext,
-        target: ts.ScriptTarget.ES2022,
-        experimentalDecorators: true,
-      },
-    }).outputText
-  } else {
-    return transpileMultipleFiles(source, ts, entryPoint)
-  }
+function transpileSingleFile(source: string): string {
+  return ts.transpileModule(source, {
+    compilerOptions: {
+      module: ts.ModuleKind.ESNext,
+      target: ts.ScriptTarget.ES2022,
+      experimentalDecorators: true,
+    },
+  }).outputText
 }
 
 export async function startClientSideServerFromSource(
   options: StartClientSideServerFromSourceOptions,
 ): Promise<StartedClientSideServer> {
   const normalizedSource = normalizeClientSideSourceImports(options.source)
-  const compiled = await (options.transpile
-    ? options.transpile(normalizedSource, options.sourceEntryPoint)
-    : Promise.resolve(transpileSource(normalizedSource, options.sourceEntryPoint)))
 
   const analysis = await (options.analyzeSource
     ? options.analyzeSource(normalizedSource, options.sourceEntryPoint)
@@ -170,13 +152,25 @@ export async function startClientSideServerFromSource(
             }),
       ))
 
-  const moduleUrl = URL.createObjectURL(new Blob([compiled], { type: 'text/javascript' }))
   let loaded: ClientSideServerSourceModule
 
-  try {
-    loaded = await import(/* @vite-ignore */ moduleUrl) as ClientSideServerSourceModule
-  } finally {
-    URL.revokeObjectURL(moduleUrl)
+  if (typeof normalizedSource !== 'string' && !options.transpile) {
+    // Multi-file without custom transpiler: use real ESM blob-URL module graph.
+    // Each file becomes its own blob-URL module with inter-file imports rewritten
+    // to sibling blob URLs, preserving native ESM semantics.
+    loaded = await transpileAndImportESMGraph(normalizedSource, ts, options.sourceEntryPoint)
+  } else {
+    // Single file or custom transpiler: transpile to a single string, load via one blob URL.
+    const compiled = await (options.transpile
+      ? options.transpile(normalizedSource, options.sourceEntryPoint)
+      : Promise.resolve(transpileSingleFile(normalizedSource as string)))
+
+    const moduleUrl = URL.createObjectURL(new Blob([compiled], { type: 'text/javascript' }))
+    try {
+      loaded = await import(/* @vite-ignore */ moduleUrl) as ClientSideServerSourceModule
+    } finally {
+      URL.revokeObjectURL(moduleUrl)
+    }
   }
 
   const definition = resolveClientSideServerDefinition(loaded, options.serverName)
@@ -459,19 +453,24 @@ export function enrichClientSideServerControllersFromSource(
 }
 
 /**
- * Transpiles multiple TypeScript files into a single JavaScript bundle.
- * Each file is transpiled independently and then concatenated with a namespace wrapper.
+ * Transpiles multiple TypeScript files into a real ESM module graph using blob URLs.
  *
- * @param sourceMap - Map of file paths to source code
- * @param ts - TypeScript-like object with transpilation capabilities
+ * Instead of concatenating transpiled files into a fake CommonJS-style bundle (which
+ * breaks because ESNext output retains `import`/`export` syntax that is invalid inside
+ * a function wrapper), each file becomes its own blob-URL ES module. Inter-file import
+ * specifiers are rewritten to the corresponding blob URLs, and the browser resolves the
+ * dependency graph natively via `import()`.
+ *
+ * @param sourceMap - Map of file paths to TypeScript source code
+ * @param tsLib - TypeScript compiler (or compatible) with `transpileModule`
  * @param entryPoint - Optional entry point file (defaults to 'index.ts' or first file)
- * @returns Transpiled and bundled JavaScript code
+ * @returns The loaded entry-point module
  */
-function transpileMultipleFiles(
+async function transpileAndImportESMGraph(
   sourceMap: Record<string, string>,
-  ts: any,
+  tsLib: any,
   entryPoint?: string,
-): string {
+): Promise<ClientSideServerSourceModule> {
   const files = Object.entries(sourceMap)
   if (files.length === 0) {
     throw new Error('No source files provided')
@@ -479,27 +478,134 @@ function transpileMultipleFiles(
 
   let entry = entryPoint
   if (!entry) {
-    // Try to find index.ts, otherwise use first file
     const indexFile = files.find(([name]) => name === 'index.ts')
     entry = indexFile ? indexFile[0] : files[0]![0]
   }
-  const transpiled: Record<string, string> = {}
 
-  // Transpile each file independently
+  // Step 1: Transpile each file independently to ESNext
+  const transpiled: Record<string, string> = {}
   for (const [fileName, content] of files) {
-    const output = ts.transpileModule(content, {
+    transpiled[fileName] = tsLib.transpileModule(content, {
       compilerOptions: {
-        module: ts.ModuleKind.ESNext,
-        target: ts.ScriptTarget.ES2022,
+        module: tsLib.ModuleKind.ESNext,
+        target: tsLib.ScriptTarget.ES2022,
         experimentalDecorators: true,
       },
     }).outputText
-    transpiled[fileName] = output
   }
 
-  // Create module wrapper that bundles all transpiled files
-  const bundledCode = createMultiFileBundle(transpiled, entry)
-  return bundledCode
+  const fileNames = new Set(Object.keys(transpiled))
+
+  // Step 2: Build dependency graph and topological-sort
+  const deps = new Map<string, string[]>()
+  for (const [fileName, code] of Object.entries(transpiled)) {
+    const localDeps: string[] = []
+    // Match: from './...' (import/export declarations)
+    for (const m of code.matchAll(/\bfrom\s+['"](\.\.[^'"]*|\.\/[^'"]*)['"]/g)) {
+      const resolved = resolveLocalSpecifier(fileName, m[1]!, fileNames)
+      if (resolved) localDeps.push(resolved)
+    }
+    // Match: import './...' (side-effect imports)
+    for (const m of code.matchAll(/\bimport\s+['"](\.\.[^'"]*|\.\/[^'"]*)['"]/g)) {
+      const resolved = resolveLocalSpecifier(fileName, m[1]!, fileNames)
+      if (resolved) localDeps.push(resolved)
+    }
+    deps.set(fileName, [...new Set(localDeps)])
+  }
+
+  const sorted = topologicalSort(deps, entry)
+
+  // Step 3: Create blob URLs in dependency order (leaves first, entry last)
+  const blobUrls = new Map<string, string>()
+  for (const fileName of sorted) {
+    const code = rewriteLocalImports(transpiled[fileName]!, fileName, blobUrls, fileNames)
+    blobUrls.set(fileName, URL.createObjectURL(new Blob([code], { type: 'text/javascript' })))
+  }
+
+  // Step 4: Import the entry point — the browser resolves the full ESM graph
+  const entryUrl = blobUrls.get(entry)!
+  try {
+    return await import(/* @vite-ignore */ entryUrl) as ClientSideServerSourceModule
+  } finally {
+    for (const url of blobUrls.values()) URL.revokeObjectURL(url)
+  }
+}
+
+/**
+ * Resolves a relative import specifier (e.g. `'./bar'`) against the importing file,
+ * trying common TypeScript/JavaScript extensions and index files.
+ */
+function resolveLocalSpecifier(fromFile: string, specifier: string, fileNames: Set<string>): string | null {
+  const lastSlash = fromFile.lastIndexOf('/')
+  const dir = lastSlash >= 0 ? fromFile.slice(0, lastSlash + 1) : ''
+
+  // Normalize: join dir + specifier (strip leading ./)
+  let resolved = specifier.startsWith('./')
+    ? dir + specifier.slice(2)
+    : dir + specifier
+  // Simple normalization for ../
+  while (resolved.includes('../')) {
+    resolved = resolved.replace(/[^/]+\/\.\.\//, '')
+  }
+  resolved = resolved.replace(/^\.\//, '')
+
+  if (fileNames.has(resolved)) return resolved
+  for (const ext of ['.ts', '.tsx', '.js', '.jsx', '.mts', '.mjs']) {
+    if (fileNames.has(resolved + ext)) return resolved + ext
+  }
+  for (const ext of ['.ts', '.tsx', '.js', '.jsx']) {
+    if (fileNames.has(resolved + '/index' + ext)) return resolved + '/index' + ext
+  }
+  return null
+}
+
+/**
+ * Rewrites local import/export specifiers in transpiled code to blob URLs.
+ * Handles `from './...'`, `export * from './...'`, and side-effect `import './...'`.
+ */
+function rewriteLocalImports(
+  code: string,
+  fileName: string,
+  blobUrls: Map<string, string>,
+  fileNames: Set<string>,
+): string {
+  return code.replace(
+    /((?:\bfrom|\bimport)\s+)(['"])(\.\.?\/[^'"]*)\2/g,
+    (match, prefix: string, _quote: string, specifier: string) => {
+      const resolved = resolveLocalSpecifier(fileName, specifier, fileNames)
+      if (resolved && blobUrls.has(resolved)) {
+        return `${prefix}'${blobUrls.get(resolved)}'`
+      }
+      return match
+    },
+  )
+}
+
+/**
+ * DFS-based topological sort. Returns files in dependency order (leaves first,
+ * entry point last) so each file's blob URL is created before any file that
+ * imports it.
+ */
+function topologicalSort(deps: Map<string, string[]>, entry: string): string[] {
+  const visited = new Set<string>()
+  const result: string[] = []
+
+  function visit(node: string) {
+    if (visited.has(node)) return
+    visited.add(node)
+    for (const dep of deps.get(node) ?? []) {
+      visit(dep)
+    }
+    result.push(node)
+  }
+
+  // Visit all non-entry nodes first, then entry — ensures entry is last
+  for (const node of deps.keys()) {
+    if (node !== entry) visit(node)
+  }
+  visit(entry)
+
+  return result
 }
 
 /**
@@ -579,47 +685,6 @@ function analyzeClientSideServerMultipleFiles(
   return { controllers }
 }
 
-/**
- * Creates a multi-file bundle by wrapping each file in a namespace object
- * and re-exporting from the entry point.
- */
-function createMultiFileBundle(
-  transpiled: Record<string, string>,
-  entryPoint: string,
-): string {
-  const modules: string[] = []
-
-  // Create namespace object containing all modules
-  modules.push('const __modules = {};')
-  modules.push('')
-
-  // Add each transpiled file as a module in the namespace
-  for (const [fileName, code] of Object.entries(transpiled)) {
-    modules.push(`__modules['${fileName}'] = {};`)
-    modules.push('(function(module) {')
-    modules.push(code)
-    modules.push(`}(__modules['${fileName}']));`)
-    modules.push('')
-  }
-
-  // Make entry point's exports the default module exports
-  modules.push(`const entryModule = __modules['${entryPoint}'];`)
-  modules.push('')
-  modules.push('// Re-export all properties from entry point')
-  modules.push('for (const key in entryModule) {')
-  modules.push('  if (Object.prototype.hasOwnProperty.call(entryModule, key)) {')
-  modules.push('    globalThis[key] = entryModule[key];')
-  modules.push('  }')
-  modules.push('}')
-  modules.push('')
-  modules.push('// Default export')
-  modules.push('export default entryModule.default ?? entryModule;')
-  modules.push('')
-  modules.push('// Named exports')
-  modules.push('export * from entryModule;')
-
-  return modules.join('\n')
-}
 
 /**
  * Analyzes a single controller class with unified type context from multiple files.
