@@ -1438,6 +1438,19 @@ class OpenAPIClientImpl<TSpec extends OpenAPISpec = OpenAPISpec, THeaders extend
   }
 }
 
+/**
+ * Fetches the OpenAPI spec from the given baseUrl and returns a new OpenAPIClient instance.
+ * @param baseUrl The base URL of the API server
+ * @param options Optional OpenAPIClient options
+ */
+export async function createClient<THeaders extends Record<string, HeaderValue | undefined> = WellKnownHeaders>(
+  baseUrl: string,
+  options?: Partial<OpenAPIClientOptions<THeaders>>,
+): Promise<OpenAPIClientInstance<any, THeaders>> {
+  const spec = await fetch(`${baseUrl.replace(/\/$/, '')}/openapi.json`).then(r => r.json());
+  return new OpenAPIClient(spec, { ...options, baseUrl });
+}
+
 interface OpenAPIClientConstructor {
   new <
     TSpec extends OpenAPISpec = OpenAPISpec,

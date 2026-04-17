@@ -31,3 +31,6 @@ export * from './types/openapi'
 export * from './types/opts'
 export * from './types/plugins'
 export * from './types/tools'
+
+// Explicitly export createClient from the correct path
+export { createClient } from './client/openapi-client'
