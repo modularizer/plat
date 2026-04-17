@@ -711,7 +711,7 @@ export class PLATClientSideServer {
       openapi: '3.1.0',
       info: this.options.openapiInfo ?? {
         title: 'plat client-side server',
-        version: '0.11.0',
+        version: '0.12.0',
       },
       paths,
     }

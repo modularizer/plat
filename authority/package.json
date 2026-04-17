@@ -1,6 +1,6 @@
 {
   "name": "@modularizer/plat-authority",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "type": "module",
   "description": "Standalone authority/control-plane service for PLAT authority-mode CSS routing.",
   "main": "./dist/index.js",
@@ -23,7 +23,7 @@
     "dev": "npm run build && npm start"
   },
   "dependencies": {
-    "@modularizer/plat": "^0.11.0",
+    "@modularizer/plat": "^0.12.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.0",
     "drizzle-kit": "^0.20.0",
