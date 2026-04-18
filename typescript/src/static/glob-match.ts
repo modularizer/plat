@@ -13,6 +13,12 @@
  * Convert a gitignore-style glob pattern to a RegExp.
  */
 function globToRegExp(pattern: string): RegExp {
+  // Defensive: warn if pattern looks like a regex, not a glob
+  if (/\\/.test(pattern)) {
+    console.warn('globToRegExp received a suspicious pattern (contains backslash):', pattern)
+    // Optionally, throw an error here to catch it early
+    // throw new Error('Invalid glob pattern: contains backslash')
+  }
   // Normalize: strip leading/trailing slashes
   let p = pattern.replace(/^\/+|\/+$/g, '')
 
