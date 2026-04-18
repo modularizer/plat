@@ -1,6 +1,6 @@
 /**
  * Abstraction over file storage. StaticFolder resolves files through this interface.
- * Implementations: NodeFileSystem (real fs), MemoryFileSystem (in-memory map), or any custom backend.
+ * Implementations: MemoryFileSystem (in-memory map) or any custom backend.
  */
 export interface VirtualFileSystem {
   /**
@@ -29,56 +29,19 @@ export function isVirtualFileSystem(value: unknown): value is VirtualFileSystem 
 }
 
 /**
- * VFS backed by Node.js filesystem. Used when StaticFolder is given a directory path string.
+ * Placeholder for filesystem-backed VFS. Real filesystem access is not available in plat-client.
  */
 export class NodeFileSystem implements VirtualFileSystem {
-  private root: string
-
-  constructor(directory: string) {
-    // Resolve to absolute path at construction time
-    const path = require('node:path')
-    this.root = path.resolve(directory)
+  constructor(_directory: string) {
+    throw new Error('NodeFileSystem is not supported in @modularizer/plat-client')
   }
 
-  private resolveSafe(subPath: string): string | null {
-    const path = require('node:path')
-    // Reject paths with .. segments to prevent directory traversal
-    const normalized = path.normalize(subPath)
-    if (normalized.startsWith('..') || path.isAbsolute(normalized)) {
-      return null
-    }
-    const resolved = path.resolve(this.root, normalized)
-    // Verify the resolved path is still within root
-    if (!resolved.startsWith(this.root + path.sep) && resolved !== this.root) {
-      return null
-    }
-    return resolved
+  async list(_subPath: string): Promise<string[]> {
+    throw new Error('NodeFileSystem is not supported in @modularizer/plat-client')
   }
 
-  async list(subPath: string): Promise<string[]> {
-    const fs = require('node:fs/promises')
-    const path = require('node:path')
-    const dir = subPath ? this.resolveSafe(subPath) : this.root
-    if (!dir) return []
-    try {
-      const entries = await fs.readdir(dir, { withFileTypes: true })
-      return entries.map((e: any) =>
-        e.isDirectory() ? e.name + '/' : e.name
-      )
-    } catch {
-      return []
-    }
-  }
-
-  async read(subPath: string): Promise<Uint8Array | null> {
-    const fs = require('node:fs/promises')
-    const resolved = this.resolveSafe(subPath)
-    if (!resolved) return null
-    try {
-      return await fs.readFile(resolved)
-    } catch {
-      return null
-    }
+  async read(_subPath: string): Promise<Uint8Array | null> {
+    throw new Error('NodeFileSystem is not supported in @modularizer/plat-client')
   }
 }
 

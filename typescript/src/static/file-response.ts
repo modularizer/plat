@@ -8,6 +8,10 @@ export interface FileResponseOpts {
   headers?: Record<string, string>
 }
 
+function hasNodeBuffer(value: unknown): value is Buffer {
+  return typeof Buffer !== 'undefined' && value instanceof Buffer
+}
+
 /**
  * A response that serves a file. Can be returned from any controller method.
  * Methods returning FileResponse should use @GET({ hidden: true }) to exclude from OpenAPI.
@@ -49,7 +53,7 @@ export class FileResponse {
     filenameOrOpts?: string | FileResponseOpts,
     opts?: FileResponseOpts,
   ): FileResponse {
-    if (typeof pathOrContent === 'string' && (filenameOrOpts === undefined || typeof filenameOrOpts === 'object' && !(filenameOrOpts instanceof Buffer))) {
+    if (typeof pathOrContent === 'string' && (filenameOrOpts === undefined || typeof filenameOrOpts === 'object' && !hasNodeBuffer(filenameOrOpts))) {
       // from(path) or from(path, opts) — filesystem path
       const path = pathOrContent
       const filename = path.split('/').pop() ?? path
@@ -61,21 +65,19 @@ export class FileResponse {
   }
 
   /**
-   * Get the file content as a Buffer. For path-based responses, reads the file.
-   * For content-based responses, converts string to Buffer if needed.
+   * Get the file content as bytes. Path-based filesystem reads are not available in plat-client.
    */
-  async getContent(): Promise<Buffer> {
+  async getContent(): Promise<Uint8Array> {
     if (this.kind === 'path') {
-      const { readFile } = await import('node:fs/promises')
-      return readFile(this.source as string)
+      throw new Error('Path-based FileResponse is not supported in @modularizer/plat-client')
     }
     if (typeof this.source === 'string') {
-      return Buffer.from(this.source, 'utf-8')
+      return new TextEncoder().encode(this.source)
     }
     if (this.source instanceof Uint8Array) {
-      return Buffer.from(this.source)
+      return this.source
     }
-    return this.source
+    return new Uint8Array(this.source)
   }
 }
 

@@ -1,4 +1,3 @@
-export * from './client'
 export * from './client-route'
 export * from './endpoints'
 export * from './errors'

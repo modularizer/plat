@@ -4,7 +4,6 @@ import { getMimeType } from './mime-types'
 import {
   isVirtualFileSystem,
   MemoryFileSystem,
-  NodeFileSystem,
   type MemoryFileEntry,
   type VirtualFileSystem,
 } from './virtual-file-system'
@@ -58,7 +57,7 @@ export class StaticFolder {
     this.opts = opts ?? {}
 
     if (typeof source === 'string') {
-      this.vfs = new NodeFileSystem(source)
+      throw new Error('String-backed StaticFolder is not supported in @modularizer/plat-client')
     } else if (isVirtualFileSystem(source)) {
       this.vfs = source
     } else {

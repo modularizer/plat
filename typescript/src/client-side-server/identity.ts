@@ -893,9 +893,6 @@ function base64UrlDecode(value: string): Uint8Array {
 
 async function resolveSubtle(): Promise<any> {
   if (globalThis.crypto?.subtle) return globalThis.crypto.subtle
-  const dynamicImport = new Function('m', 'return import(m)') as (m: string) => Promise<any>
-  const cryptoModule = await dynamicImport('node:crypto')
-  if (cryptoModule.webcrypto?.subtle) return cryptoModule.webcrypto.subtle
   throw new Error('Web Crypto subtle API is not available in this environment')
 }
 

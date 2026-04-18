@@ -212,14 +212,6 @@ function resolveCrypto(): Crypto {
 
 async function resolveSubtle(): Promise<SubtleCrypto> {
   if (globalThis.crypto?.subtle) return globalThis.crypto.subtle
-  const dynamicImport = new Function('m', 'return import(m)') as (m: string) => Promise<any>
-  const cryptoModule = await dynamicImport('node:crypto')
-  if (cryptoModule.webcrypto) {
-    if (!globalThis.crypto) {
-      ;(globalThis as any).crypto = cryptoModule.webcrypto
-    }
-    return cryptoModule.webcrypto.subtle as SubtleCrypto
-  }
   throw new Error('Web Crypto subtle API is not available in this environment')
 }
 
@@ -237,4 +229,3 @@ function base64ToBytes(base64: string): Uint8Array {
   }
   return bytes
 }
-

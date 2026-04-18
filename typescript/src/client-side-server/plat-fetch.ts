@@ -64,6 +64,7 @@ export function createPlatFetch(options: PlatFetchOptions): typeof globalThis.fe
       headers: extractHeaders(init?.headers),
       input: inputParams,
     }
+    console.log("req", channel, rpcRequest, {input, init})
 
     const response = await sendAndWait(channel, rpcRequest, init?.signal ?? null)
 

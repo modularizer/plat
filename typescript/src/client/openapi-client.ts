@@ -14,7 +14,6 @@ import type { DeferredCallOptions } from '../types/client'
 import type { OpenAPIClientTransportPlugin } from './transport-plugin'
 import { createHttpTransportPlugin } from './http-transport-plugin'
 import { createRpcTransportPlugin } from './rpc-transport-plugin'
-import { createFileTransportPlugin } from './file-transport-plugin'
 import { executeClientTransportPlugin, type OpenAPIClientTransportRequest } from './transport-plugin'
 import { createClientSideServerMQTTWebRTCTransportPlugin } from '../client-side-server/mqtt-webrtc'
 
@@ -371,12 +370,6 @@ class OpenAPIClientImpl<TSpec extends OpenAPISpec = OpenAPISpec, THeaders extend
   private cachedTools?: ToolDefinition[]
   private rpcSocket?: WebSocket
   private rpcSocketPromise?: Promise<WebSocket>
-  private nodeFileRuntimePromise?: Promise<{
-    mkdir: (path: string) => Promise<void>
-    writeFile: (path: string, content: string) => Promise<void>
-    readFile: (path: string) => Promise<string>
-    join: (...parts: string[]) => string
-  }>
   private rpcPending = new Map<string, {
     resolve: (value: unknown) => void
     reject: (error: Error) => void
@@ -397,6 +390,7 @@ class OpenAPIClientImpl<TSpec extends OpenAPISpec = OpenAPISpec, THeaders extend
     options: OpenAPIClientOptions<THeaders>,
   ) {
     this.baseUrl = options.baseUrl
+      console.warn("building client proxy", options.baseUrl)
     this.headers = this.normalizeHeaders(options.headers)
     this.fetchInit = options.fetchInit
     this.timeoutMs = options.timeoutMs ?? 30000
@@ -409,15 +403,15 @@ class OpenAPIClientImpl<TSpec extends OpenAPISpec = OpenAPISpec, THeaders extend
     this.rpcPath = options.rpcPath ?? DEFAULT_RPC_PATH
     this.callsPath = options.callsPath ?? '/platCall'
     this.hooks = options.hooks
+    const builtInTransportRuntime = this.createBuiltInTransportRuntime()
     const defaultTransportPlugins = this.baseUrl.startsWith('css://')
       ? [createClientSideServerMQTTWebRTCTransportPlugin()]
       : []
     this.transportPlugins = [
       ...(options.transportPlugins ?? []),
       ...defaultTransportPlugins,
-      createHttpTransportPlugin(this.createBuiltInTransportRuntime()),
-      createRpcTransportPlugin(this.createBuiltInTransportRuntime()),
-      createFileTransportPlugin(this.createBuiltInTransportRuntime()),
+      createHttpTransportPlugin(builtInTransportRuntime),
+      createRpcTransportPlugin(builtInTransportRuntime),
     ]
     this.openapi = openAPISpec
 
@@ -524,22 +518,6 @@ class OpenAPIClientImpl<TSpec extends OpenAPISpec = OpenAPISpec, THeaders extend
       detectResponseFormat: (response: Response, specContentTypes: string[]) => this._detectResponseFormat(response, specContentTypes),
       fetchInit: this.fetchInit,
       timeoutMs: this.timeoutMs,
-      fileQueue: {
-        resolvePaths: () => this.resolveFileQueuePaths(),
-        pollIntervalMs: 100,
-        mkdir: async (path: string) => {
-          const runtime = await this.getNodeFileRuntime()
-          await runtime.mkdir(path)
-        },
-        write: async (path: string, content: string) => {
-          const runtime = await this.getNodeFileRuntime()
-          await runtime.writeFile(path, content)
-        },
-        read: async (path: string) => {
-          const runtime = await this.getNodeFileRuntime()
-          return await runtime.readFile(path)
-        },
-      },
     }
   }
 
@@ -594,6 +572,7 @@ class OpenAPIClientImpl<TSpec extends OpenAPISpec = OpenAPISpec, THeaders extend
     params: InferParams<TSpec, P, M>,
     options?: O,
   ): Promise<CallReturn<InferResponse<TSpec, P, M>, NonNullable<O>>> {
+      console.log({params, options, ok: 5})
     // Find the operation in the OpenAPI spec by method and path
     const operation = this.findOperationByPath(method, path as string)
     if (!operation) {
@@ -676,12 +655,19 @@ class OpenAPIClientImpl<TSpec extends OpenAPISpec = OpenAPISpec, THeaders extend
 
     // Serialize request body based on format
     let body: BodyInit | undefined
-
+    console.log({p, requestBody, bod: options?.body})
     if (options?.body) {
       // Raw body passthrough
       body = options.body
-    } else if (requestBody && p._body) {
-      const payload = p._body as Record<string, unknown>
+    } else {
+      // Prefer explicit `_body` (lets callers mix a body with path/query/header
+      // params in one args object). Otherwise treat the caller's leftover
+      // fields — everything not consumed as a path/query/header param — as the
+      // body, so the natural API `client.submitGuess({ sessionId, guess })`
+      // works without requiring a manual `_body` wrapper.
+      const payload = (p._body !== undefined)
+        ? p._body as Record<string, unknown>
+        : pickBodyFields(p, pathParams, queryParams, headerParams)
       const reqFormat = options?.requestFormat
         ?? this._detectRequestFormat(payload, requestContentTypes)
 
@@ -733,6 +719,11 @@ class OpenAPIClientImpl<TSpec extends OpenAPISpec = OpenAPISpec, THeaders extend
         responseFormat: options?.responseFormat,
         responseContentTypes,
       } satisfies OpenAPIClientTransportRequest) as CallReturn<InferResponse<TSpec, P, M>, NonNullable<O>>
+    }
+    if (this.transportMode === 'file') {
+      throw new Error(
+        'File transport is not built into @modularizer/plat-client. Pass a custom transport plugin if you need to handle file:// URLs.',
+      )
     }
 
     // Make request with retries
@@ -976,41 +967,6 @@ class OpenAPIClientImpl<TSpec extends OpenAPISpec = OpenAPISpec, THeaders extend
     })
 
     return this.rpcSocketPromise
-  }
-
-  private async getNodeFileRuntime(): Promise<{
-    mkdir: (path: string) => Promise<void>
-    writeFile: (path: string, content: string) => Promise<void>
-    readFile: (path: string) => Promise<string>
-    join: (...parts: string[]) => string
-  }> {
-    if (!this.nodeFileRuntimePromise) {
-      const dynamicImport = new Function('m', 'return import(m)') as (m: string) => Promise<any>
-      this.nodeFileRuntimePromise = Promise.all([
-        dynamicImport('node:fs/promises'),
-        dynamicImport('node:path'),
-      ]).then(([fs, path]: [any, any]) => ({
-        mkdir: async (targetPath: string) => { await fs.mkdir(targetPath, { recursive: true }) },
-        writeFile: async (targetPath: string, content: string) => { await fs.writeFile(targetPath, content) },
-        readFile: async (targetPath: string) => await fs.readFile(targetPath, 'utf8'),
-        join: (...parts: string[]) => path.join(...parts),
-      }))
-    }
-
-    return this.nodeFileRuntimePromise
-  }
-
-  private async resolveFileQueuePaths(): Promise<{ inbox: string; outbox: string }> {
-    const url = new URL(this.baseUrl)
-    if (url.protocol !== 'file:') {
-      throw new Error(`File transport requires file:// baseUrl, got ${this.baseUrl}`)
-    }
-    const root = decodeURIComponent(url.pathname)
-    const { join } = await this.getNodeFileRuntime()
-    return {
-      inbox: join(root, 'inbox'),
-      outbox: join(root, 'outbox'),
-    }
   }
 
   createDeferredHandle<TResult>(
@@ -1436,6 +1392,21 @@ class OpenAPIClientImpl<TSpec extends OpenAPISpec = OpenAPISpec, THeaders extend
     })
     return spec
   }
+}
+
+function pickBodyFields(
+  p: Record<string, unknown>,
+  pathParams: string[],
+  queryParams: string[],
+  headerParams: string[],
+): Record<string, unknown> {
+  const consumed = new Set<string>([...pathParams, ...queryParams, ...headerParams, '_body'])
+    console.log({p, pathParams, queryParams, headerParams})
+  const out: Record<string, unknown> = {}
+  for (const k of Object.keys(p)) {
+    if (!consumed.has(k)) out[k] = p[k]
+  }
+  return out
 }
 
 /**

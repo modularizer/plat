@@ -1,11 +1,13 @@
 import {
     ClientCallOptions,
-    ClientError,
     ClientProxyConfig,
     Clientified,
+    RetryContext,
+} from '../types/client'
+import {
+    ClientError,
     EndpointDef,
     NetworkError,
-    RetryContext,
     ServerError,
     TimeoutError,
 } from '../types'
@@ -54,6 +56,7 @@ export function createClientProxy<T>(
 
                 return async (input: unknown, callOptions?: ClientCallOptions) => {
                     const parsedInput = route.inputSchema.parse(input)
+                    console.log('calling', {input, parsedInput});
                     return executeRoute(fetchImpl, route, parsedInput, config, callOptions)
                 }
             },

@@ -4,7 +4,7 @@ import type {
   OpenAPIClientTransportRequest,
 } from './transport-plugin'
 
-interface FileTransportRuntime {
+export interface FileTransportRuntime {
   nextRequestId(prefix: string): string
   stringifyHeaders(headers: Record<string, string | number | boolean | undefined>): Record<string, string>
   parseJson(text: string): unknown

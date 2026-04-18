@@ -2,6 +2,8 @@ import { createClientProxy } from '../client'
 import type {
     ClientCallOptions,
     Clientified,
+} from '../types/client'
+import type {
     EndpointDef,
     HttpMethod,
 } from '../types'
