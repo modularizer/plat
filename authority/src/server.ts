@@ -24,8 +24,8 @@ import {
   RateLimitService,
   StrikeService,
   BlockService,
-  GoogleOAuthService,
-  OAuthRedirectService,
+  GoogleIdTokenService,
+  GoogleOAuthError,
   getAuthorityModeForServerName,
   ActivityService,
   ServerNameHistoryService,
@@ -50,8 +50,19 @@ const OAUTH_RATE_LIMIT_PER_30S = Number(process.env.OAUTH_RATE_LIMIT_PER_30S || 
 const ADMIN_SESSION_TTL_SECONDS = Number(process.env.ADMIN_SESSION_TTL_SECONDS || `${12 * 60 * 60}`)
 const TRACEBACK_MAX_LINES = Math.max(0, Number(process.env.TRACEBACK_MAX_LINES || '0'))
 
-// Canonical Google client ID used across host auth and OAuth flows.
+// Canonical Google client ID used across host auth and Google Identity
+// Services (GIS) ID-token verification.
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID
+// Optional additional audiences (comma-separated). Useful when a CLI/service-account
+// flow mints ID tokens with a different aud than the browser client ID.
+const EXTRA_GOOGLE_AUDIENCES = (process.env.GOOGLE_ID_TOKEN_AUDIENCES || '')
+  .split(',')
+  .map((value) => value.trim())
+  .filter(Boolean)
+const ALLOWED_GOOGLE_HOSTED_DOMAINS = (process.env.GOOGLE_ALLOWED_HOSTED_DOMAINS || '')
+  .split(',')
+  .map((value) => value.trim())
+  .filter(Boolean)
 
 const sharedRedisUrl = process.env.REDIS_URL
 const hostAuthService = new HostAuthService({
@@ -80,14 +91,6 @@ const blockService = new BlockService({ redisUrl: sharedRedisUrl })
 const activityService = new ActivityService({ redisUrl: sharedRedisUrl })
 const serverNameHistoryService = new ServerNameHistoryService()
 
-const oauthRedirectOrigins = (process.env.OAUTH_ALLOWED_REDIRECT_ORIGINS || '')
-  .split(',')
-  .map((value) => value.trim())
-  .filter(Boolean)
-
-const oauthRedirectService = new OAuthRedirectService({
-  allowedRedirectOrigins: oauthRedirectOrigins,
-})
 const JWT_SECRET = process.env.ADMIN_SESSION_SECRET || ADMIN_TOKEN
 const jwtConfig = { secret: JWT_SECRET, expiresIn: `${ADMIN_SESSION_TTL_SECONDS}s` }
 const jwtAuth = createJwtAuth(jwtConfig)
@@ -98,16 +101,12 @@ const adminGoogleSubs = new Set(
     .filter(Boolean),
 )
 
-const oauthEnabled = !!(
-  GOOGLE_CLIENT_ID &&
-  process.env.GOOGLE_OAUTH_CLIENT_SECRET &&
-  process.env.GOOGLE_OAUTH_REDIRECT_URI
-)
-const googleOAuthService = oauthEnabled
-  ? new GoogleOAuthService({
-      clientId: GOOGLE_CLIENT_ID as string,
-      clientSecret: process.env.GOOGLE_OAUTH_CLIENT_SECRET as string,
-      redirectUri: process.env.GOOGLE_OAUTH_REDIRECT_URI as string,
+const googleIdTokenService = GOOGLE_CLIENT_ID
+  ? new GoogleIdTokenService({
+      audience: [GOOGLE_CLIENT_ID, ...EXTRA_GOOGLE_AUDIENCES],
+      ...(ALLOWED_GOOGLE_HOSTED_DOMAINS.length
+        ? { allowedHostedDomains: ALLOWED_GOOGLE_HOSTED_DOMAINS }
+        : {}),
     })
   : null
 
@@ -121,7 +120,6 @@ type OAuthErrorResponse = {
   status: number
   code: string
   message: string
-  details?: string
 }
 
 function isServerOnline(serverName: string): boolean {
@@ -217,33 +215,11 @@ function normalizeOAuthError(error: unknown): OAuthErrorResponse {
     }
   }
 
-  if (error instanceof Error) {
-    const message = error.message || 'OAuth flow failed'
-
-    if (error.name === 'GoogleOAuthError') {
-      const googleError = error as Error & { code?: string; status?: number; details?: string }
-      return {
-        status: googleError.status && googleError.status >= 400 && googleError.status < 500 ? 502 : 500,
-        code: googleError.code || 'oauth_provider_error',
-        message,
-        details: googleError.details,
-      }
-    }
-
-    if (message === 'redirect_uri origin is not allowed') {
-      return {
-        status: 400,
-        code: 'redirect_uri_not_allowed',
-        message,
-      }
-    }
-
-    if (message === 'Invalid or expired oauth state') {
-      return {
-        status: 400,
-        code: 'invalid_oauth_state',
-        message,
-      }
+  if (error instanceof GoogleOAuthError) {
+    return {
+      status: error.status,
+      code: error.code,
+      message: error.message,
     }
   }
 
@@ -252,42 +228,6 @@ function normalizeOAuthError(error: unknown): OAuthErrorResponse {
     code: 'oauth_internal_error',
     message: getErrorMessage(error),
   }
-}
-
-function setRedirectHashParam(redirectUrl: URL, key: string, value: string): void {
-  const hashParams = new URLSearchParams(redirectUrl.hash.startsWith('#') ? redirectUrl.hash.slice(1) : '')
-  hashParams.set(key, value)
-  redirectUrl.hash = hashParams.toString()
-}
-
-function sendOAuthErrorResponse(
-  ctx: RouteContext,
-  error: OAuthErrorResponse,
-  responseMode: 'json' | 'redirect',
-  redirectUri?: string,
-): void {
-  if (responseMode === 'redirect' && redirectUri && ctx.response) {
-    const redirectUrl = new URL(redirectUri)
-    setRedirectHashParam(redirectUrl, 'oauth_error', error.code)
-    setRedirectHashParam(redirectUrl, 'oauth_error_description', error.message)
-    ;(ctx.response as any).redirect(redirectUrl.toString())
-    return
-  }
-
-  if (ctx.response) {
-    ;(ctx.response as any).status(error.status).json({
-      ok: false,
-      error: error.code,
-      message: error.message,
-      ...(error.details ? { details: error.details } : {}),
-    })
-    return
-  }
-
-  throw new HttpError(error.status, error.code, {
-    message: error.message,
-    ...(error.details ? { details: error.details } : {}),
-  })
 }
 
 function isAdminGoogleSub(googleSub: string): boolean {
@@ -335,88 +275,44 @@ function logServerError(label: string, error: unknown, details?: Record<string, 
 }
 
 @Controller()
-class OAuthController {
-  @GET()
-  async oauthStart(
-    input: { redirect_uri?: string; response_mode?: 'json' | 'redirect'; role?: 'admin' | 'user' },
+class AuthController {
+  /**
+   * Exchange a Google Identity Services ID token (from the browser GIS SDK,
+   * a service-account JWT→ID-token flow, or any other Google-issued ID token)
+   * for an authority-issued session JWT.
+   */
+  @POST()
+  async authSession(
+    input: { id_token?: string; role?: 'admin' | 'user' },
     ctx: RouteContext,
   ) {
     try {
-      if (!googleOAuthService) {
-        throw new HttpError(503, `oauth_not_configured`)
-      }
-
-      const clientKey = `ip:${getIpFromContext(ctx)}`
-      const decision = await rateLimitService.checkAllowance('oauth_start', clientKey, OAUTH_RATE_LIMIT_PER_30S)
-      if (!decision.allowed) {
-        throw new HttpError(429, 'oauth_rate_limited', {
-          retryAfterMs: decision.retryAfterMs,
-        })
-      }
-
-      const role = input.role === 'admin' ? 'admin' : 'user'
-      const state = oauthRedirectService.createState(input.redirect_uri, role)
-      const url = googleOAuthService.buildAuthorizationUrl(state)
-
-      if ((input.response_mode || 'redirect') === 'redirect' && ctx.response) {
-        ;(ctx.response as any).redirect(url)
-        return
-      }
-
-      return { ok: true, state, url }
-    } catch (error) {
-      const normalized = normalizeOAuthError(error)
-      logServerError('[oauth:start]', error, {
-        normalizedError: normalized,
-        redirectUri: input.redirect_uri,
-        responseMode: input.response_mode || 'redirect',
-        role: input.role || 'user',
-      })
-      sendOAuthErrorResponse(ctx, normalized, input.response_mode || 'redirect', input.redirect_uri)
-      return
-    }
-  }
-
-  @GET()
-  async oauthCallback(
-    input: { state?: string; code?: string; error?: string; response_mode?: 'json' | 'redirect' },
-    ctx: RouteContext,
-  ) {
-    let redirectUri: string | undefined
-    try {
-      if (!googleOAuthService) {
+      if (!googleIdTokenService) {
         throw new HttpError(503, 'oauth_not_configured')
       }
 
       const clientKey = `ip:${getIpFromContext(ctx)}`
-      const decision = await rateLimitService.checkAllowance('oauth_callback', clientKey, OAUTH_RATE_LIMIT_PER_30S)
+      const decision = await rateLimitService.checkAllowance('auth_session', clientKey, OAUTH_RATE_LIMIT_PER_30S)
       if (!decision.allowed) {
         throw new HttpError(429, 'oauth_rate_limited', {
           retryAfterMs: decision.retryAfterMs,
         })
       }
 
-      if (!input.state) {
-        throw new HttpError(400, 'missing_state')
-      }
-      if (input.error) {
-        throw new HttpError(400, `oauth_error:${input.error}`)
-      }
-      if (!input.code) {
-        throw new HttpError(400, 'missing_code')
+      const idToken = typeof input.id_token === 'string' ? input.id_token.trim() : ''
+      if (!idToken) {
+        throw new HttpError(400, 'missing_id_token')
       }
 
-      const state = oauthRedirectService.consumeState(input.state)
-      redirectUri = state.redirectUri
-      const tokenResult = await googleOAuthService.exchangeCode(input.code)
-      const profile = await googleOAuthService.fetchProfile(tokenResult.accessToken)
-      const roles = state.role === 'admin'
+      const profile = await googleIdTokenService.verifyIdToken(idToken)
+      const requestedRole = input.role === 'admin' ? 'admin' : 'user'
+      const roles = requestedRole === 'admin'
         ? ['admin']
         : isAdminGoogleSub(profile.sub)
           ? ['user', 'admin']
           : ['user']
 
-      if (state.role === 'admin' && !roles.includes('admin')) {
+      if (requestedRole === 'admin' && !isAdminGoogleSub(profile.sub)) {
         throw new HttpError(403, 'not_admin')
       }
 
@@ -441,61 +337,29 @@ class OAuthController {
         } catch { /* non-fatal — client falls back to initial avatar */ }
       }
 
-      if ((input.response_mode || 'redirect') === 'redirect' && redirectUri && ctx.response) {
-        const redirectUrl = new URL(redirectUri)
-        setRedirectHashParam(redirectUrl, 'session_token', token)
-        if (pictureDataUrl) setRedirectHashParam(redirectUrl, 'picture_data', pictureDataUrl)
-        ;(ctx.response as any).redirect(redirectUrl.toString())
-        return
-      }
-
       return {
         ok: true,
         session_token: token,
         google_sub: profile.sub,
         roles,
         profile,
-        id_token: tokenResult.idToken,
+        ...(pictureDataUrl ? { picture_data: pictureDataUrl } : {}),
       }
     } catch (error) {
       const normalized = normalizeOAuthError(error)
-      logServerError('[oauth:callback]', error, {
+      logServerError('[auth:session]', error, {
         normalizedError: normalized,
-        state: input.state,
-        hasCode: !!input.code,
-        providerError: input.error,
-        redirectUri,
+        role: input.role || 'user',
       })
-      sendOAuthErrorResponse(ctx, normalized, input.response_mode || 'redirect', redirectUri)
-      return
-    }
-  }
-
-  @POST()
-  async oauthExchange(_input: { grant_id?: string }, ctx: RouteContext) {
-    try {
-      throw new HttpError(410, 'oauth_exchange_deprecated')
-    } catch (error) {
-      const normalized = normalizeOAuthError(error)
-      logServerError('[oauth:exchange]', error, {
-        normalizedError: normalized,
-      })
-      sendOAuthErrorResponse(ctx, normalized, 'json')
-      return
-    }
-  }
-
-  @POST()
-  async oauthAdminSession(_input: { grant_id?: string }, ctx: RouteContext) {
-    try {
-      throw new HttpError(410, 'oauth_admin_session_deprecated')
-    } catch (error) {
-      const normalized = normalizeOAuthError(error)
-      logServerError('[oauth:admin-session]', error, {
-        normalizedError: normalized,
-      })
-      sendOAuthErrorResponse(ctx, normalized, 'json')
-      return
+      if (ctx.response) {
+        ;(ctx.response as any).status(normalized.status).json({
+          ok: false,
+          error: normalized.code,
+          message: normalized.message,
+        })
+        return
+      }
+      throw new HttpError(normalized.status, normalized.code, { message: normalized.message })
     }
   }
 }
@@ -1096,7 +960,7 @@ const server = createServer(
   },
   HealthController,
   ConnectController,
-  OAuthController,
+  AuthController,
   UserController,
   Admin,
 )

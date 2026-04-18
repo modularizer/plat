@@ -144,6 +144,42 @@ const activityServerSnapshotSchema = z.object({
   events: z.array(activityEventSchema),
 })
 
+export interface AuthSessionResult {
+  session_token: string
+  google_sub: string
+  roles: string[]
+  profile: { sub: string; email?: string; name?: string; picture?: string }
+  picture_data?: string
+}
+
+const authSessionSchema = z.object({
+  ok: z.literal(true),
+  session_token: z.string(),
+  google_sub: z.string(),
+  roles: z.array(z.string()),
+  profile: z.object({
+    sub: z.string(),
+    email: z.string().optional(),
+    name: z.string().optional(),
+    picture: z.string().optional(),
+  }).passthrough(),
+  picture_data: z.string().optional(),
+})
+
+export async function exchangeGoogleIdToken(idToken: string, role: 'admin' | 'user' = 'admin'): Promise<AuthSessionResult> {
+  const response = await fetch(`${baseUrl}/authSession`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ id_token: idToken, role }),
+  })
+  const payload = await response.json().catch(() => null) as { message?: string; error?: string } | null
+  if (!response.ok) {
+    const message = payload?.message || payload?.error || `Sign-in failed (${response.status})`
+    throw new Error(message)
+  }
+  return authSessionSchema.parse(payload)
+}
+
 export const api = {
   requests: async (_input: Record<string, never>) => {
     return requestJson('/adminRequests', { method: 'GET', headers: getHeaders() }, z.array(namespaceRequestSchema))

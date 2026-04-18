@@ -149,9 +149,16 @@ npm start
 Environment variables:
 
 ```bash
-# Google OAuth config (for host auth)
+# Google client ID — used to verify Google-issued ID tokens (host auth + /authSession)
 GOOGLE_CLIENT_ID=...
-GOOGLE_CLIENT_SECRET=...
+
+# Optional extra audiences (comma-separated). Useful when CLI / service-account
+# flows mint ID tokens with a different `aud` than the browser client ID.
+# GOOGLE_ID_TOKEN_AUDIENCES=cli-client-id,service-account-audience
+
+# Optional Workspace hosted-domain allowlist. If set, ID tokens without a
+# matching `hd` claim are rejected.
+# GOOGLE_ALLOWED_HOSTED_DOMAINS=example.com
 
 # Database (Postgres for ownership, Redis for rate limits)
 DATABASE_URL=postgresql://user:pass@postgres:5432/plat_authority
@@ -167,7 +174,6 @@ AUTHORITY_DISALLOWED_NAMESPACE_GLOBS=admin-*,*-internal,staging
 # Host auth
 # insecure_token_sub (dev) | google_tokeninfo (recommended)
 HOST_AUTH_MODE=google_tokeninfo
-GOOGLE_CLIENT_ID=...
 
 # Abuse controls
 CONNECT_RATE_LIMIT_PER_30S=500
@@ -175,10 +181,10 @@ WS_HOST_MSG_RATE_LIMIT_PER_30S=300
 WS_PRESENCE_MSG_RATE_LIMIT_PER_30S=300
 OAUTH_RATE_LIMIT_PER_30S=30
 
-# OAuth redirect framework (UI can live in another repo)
-GOOGLE_OAUTH_CLIENT_SECRET=...
-GOOGLE_OAUTH_REDIRECT_URI=https://authority.example.com/oauthCallback
-OAUTH_ALLOWED_REDIRECT_ORIGINS=https://app.example.com,http://localhost:5173
+# Admin session config
+# ADMIN_GOOGLE_SUBS=google-sub-1,google-sub-2
+# ADMIN_SESSION_TTL_SECONDS=43200
+ADMIN_SESSION_SECRET=replace-me-with-a-long-random-secret
 
 # Cloudflare Tunnel (external ingress)
 CLOUDFLARE_TUNNEL_ID=...
@@ -295,29 +301,46 @@ Clients can subscribe to server online/offline events.
 { "type": "presence_update", "server_name": "...", "online": true }
 ```
 
-### OAuth Redirect Endpoints (Flat)
+### Authentication Endpoint
 
-- `GET /oauthStart` (build + optional redirect to Google; accepts optional `role=admin|user`)
-- `GET /oauthCallback` (Google callback; mints a signed authority session token)
-- `POST /oauthExchange` (deprecated)
-- `POST /oauthAdminSession` (deprecated)
+Authority uses [Google Identity Services](https://developers.google.com/identity/gsi/web) (GIS). The server never handles authorization codes, client secrets, or redirect callbacks — it only verifies a Google-issued ID token and returns an authority session JWT.
 
-Typical no-UI flow:
+#### `POST /authSession`
 
-1. Frontend/backend calls `GET /oauthStart?redirect_uri=https://app.example.com/callback`.
-2. Authority redirects user-agent to Google.
-3. Google redirects back to `GET /oauthCallback` on authority.
-4. Authority redirects to app callback with `#session_token=...` in the URL fragment.
-5. App stores that token and sends it on future requests with `Authorization: Bearer <token>`.
+**Request:**
+```json
+{
+  "id_token": "<Google-issued ID token (JWT)>",
+  "role": "user"
+}
+```
 
-If the callback fails after authority has resolved the caller redirect, authority redirects back with `#oauth_error=...` and `#oauth_error_description=...` in the fragment instead of returning a silent browser 500.
+- `id_token` — required. Must be signed by Google and have `aud` matching `GOOGLE_CLIENT_ID` (or one of `GOOGLE_ID_TOKEN_AUDIENCES`).
+- `role` — optional. `"admin"` asks for an admin session; authority enforces `ADMIN_GOOGLE_SUBS` and responds `403 not_admin` if the subject is not allow-listed.
 
-Admin-specific flow (optional, for admin dashboards/tools):
+**Response (success):**
+```json
+{
+  "ok": true,
+  "session_token": "<authority JWT>",
+  "google_sub": "1234567890",
+  "roles": ["user"],
+  "profile": { "sub": "1234567890", "email": "...", "name": "...", "picture": "..." },
+  "picture_data": "data:image/jpeg;base64,..."
+}
+```
 
-1. Start login with `GET /oauthStart?role=admin&redirect_uri=https://app.example.com/admin`.
-2. Authority verifies the Google account is allowed to act as admin.
-3. Authority redirects back with `#session_token=...`, `#google_sub=...`, and role metadata in the fragment.
-4. The admin app stores the token and uses `Authorization: Bearer <token>` on admin routes.
+Use `Authorization: Bearer <session_token>` on subsequent authority requests.
+
+#### Client flows that produce an ID token
+
+- **Browser:** load the GIS SDK (`https://accounts.google.com/gsi/client`), call `google.accounts.id.initialize({ client_id, callback })`, then render the Sign-In button or call `prompt()`. The `callback` receives a credential (ID token) that you POST to `/authSession`.
+- **CLI / installed apps:** use the Google OAuth device code flow with `openid` scope, then send the returned `id_token` to `/authSession`. Add the CLI client ID to `GOOGLE_ID_TOKEN_AUDIENCES` on the server.
+- **Service accounts:** mint a service-account signed JWT with the desired `target_audience` and exchange it at Google's token endpoint for an ID token, then POST that to `/authSession`. Add the target audience to `GOOGLE_ID_TOKEN_AUDIENCES`.
+
+#### Admin dashboard
+
+The bundled admin app in `authority/admin/` uses `google.accounts.id.renderButton` to obtain an ID token and calls `/authSession` with `role=admin`. Set `VITE_GOOGLE_CLIENT_ID` at build time so the button can be rendered.
 
 ---
 

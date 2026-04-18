@@ -1,43 +1,98 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import { CheckCircle2, XCircle, Clock, ShieldCheck, LogOut, Activity, ListChecks } from 'lucide-react'
-import { api, type AssignedNamespace, type NamespaceRequest, type ActivityServer, type ActivityServerSnapshot } from './lib/api'
+import { api, type AssignedNamespace, type NamespaceRequest, type ActivityServer, type ActivityServerSnapshot, exchangeGoogleIdToken } from './lib/api'
 
 type Tab = 'activity' | 'requests'
+
+declare global {
+  interface Window {
+    google?: {
+      accounts: {
+        id: {
+          initialize: (config: {
+            client_id: string
+            callback: (response: { credential: string }) => void
+            auto_select?: boolean
+            cancel_on_tap_outside?: boolean
+          }) => void
+          renderButton: (parent: HTMLElement, options: Record<string, unknown>) => void
+          prompt: () => void
+          disableAutoSelect: () => void
+        }
+      }
+    }
+  }
+}
+
+const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined
 
 export default function AdminDashboard() {
   const [tab, setTab] = useState<Tab>('activity')
   const [adminGoogleSub, setAdminGoogleSub] = useState(() => localStorage.getItem('admin_sub') || '')
   const [adminToken, setAdminToken] = useState(() => localStorage.getItem('admin_token') || '')
   const [authError, setAuthError] = useState<string | null>(null)
+  const [exchanging, setExchanging] = useState(false)
+  const gsiButtonRef = useRef<HTMLDivElement | null>(null)
 
-  useEffect(() => {
-    const hash = new URLSearchParams(window.location.hash.startsWith('#') ? window.location.hash.slice(1) : '')
-    const sessionToken = hash.get('session_token')
-    const googleSub = hash.get('google_sub')
-    const oauthError = hash.get('oauth_error_description') || hash.get('oauth_error')
-
-    if (sessionToken) { localStorage.setItem('admin_token', sessionToken); setAdminToken(sessionToken) }
-    if (googleSub) { localStorage.setItem('admin_sub', googleSub); setAdminGoogleSub(googleSub) }
-    if (oauthError) setAuthError(oauthError)
-    if (window.location.hash) {
-      window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`)
+  const handleCredential = useCallback(async (credential: string) => {
+    setAuthError(null)
+    setExchanging(true)
+    try {
+      const result = await exchangeGoogleIdToken(credential, 'admin')
+      localStorage.setItem('admin_token', result.session_token)
+      localStorage.setItem('admin_sub', result.google_sub)
+      setAdminToken(result.session_token)
+      setAdminGoogleSub(result.google_sub)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Sign-in failed'
+      setAuthError(message)
+    } finally {
+      setExchanging(false)
     }
   }, [])
 
-  function startLogin(): void {
-    const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000'
-    const loginUrl = new URL('/oauthStart', baseUrl)
-    loginUrl.searchParams.set('role', 'admin')
-    loginUrl.searchParams.set('redirect_uri', `${window.location.origin}${window.location.pathname}${window.location.search}`)
-    window.location.assign(loginUrl.toString())
-  }
+  useEffect(() => {
+    if (adminToken || !GOOGLE_CLIENT_ID) return
+    let cancelled = false
+    const init = () => {
+      if (cancelled || !window.google?.accounts?.id || !gsiButtonRef.current) return
+      window.google.accounts.id.initialize({
+        client_id: GOOGLE_CLIENT_ID,
+        callback: (response) => { handleCredential(response.credential) },
+        auto_select: false,
+        cancel_on_tap_outside: true,
+      })
+      window.google.accounts.id.renderButton(gsiButtonRef.current, {
+        type: 'standard',
+        theme: 'filled_blue',
+        size: 'large',
+        text: 'signin_with',
+        shape: 'rectangular',
+        logo_alignment: 'left',
+        width: 320,
+      })
+    }
+    if (window.google?.accounts?.id) {
+      init()
+    } else {
+      const poll = window.setInterval(() => {
+        if (window.google?.accounts?.id) {
+          window.clearInterval(poll)
+          init()
+        }
+      }, 100)
+      return () => { cancelled = true; window.clearInterval(poll) }
+    }
+    return () => { cancelled = true }
+  }, [adminToken, handleCredential])
 
   function logout(): void {
     localStorage.removeItem('admin_token')
     localStorage.removeItem('admin_sub')
     setAdminToken('')
     setAdminGoogleSub('')
+    window.google?.accounts?.id?.disableAutoSelect()
   }
 
   if (!adminToken) {
@@ -56,7 +111,16 @@ export default function AdminDashboard() {
           {authError ? (
             <div className="mt-6 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{authError}</div>
           ) : null}
-          <button onClick={startLogin} className="mt-6 w-full rounded-lg bg-blue-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-blue-700">Sign In</button>
+          {!GOOGLE_CLIENT_ID ? (
+            <div className="mt-6 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+              Set <code>VITE_GOOGLE_CLIENT_ID</code> to enable sign-in.
+            </div>
+          ) : (
+            <div className="mt-6 flex justify-center">
+              <div ref={gsiButtonRef} aria-busy={exchanging} />
+            </div>
+          )}
+          {exchanging ? <div className="mt-3 text-center text-xs text-gray-500">Signing in…</div> : null}
         </div>
       </div>
     )
