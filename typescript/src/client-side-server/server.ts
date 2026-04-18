@@ -42,8 +42,40 @@ import type {
   ClientSideServerMessage,
   ClientSideServerRequest,
 } from './protocol'
+import {
+  createClientSideServerMQTTWebRTCServer,
+  type ClientSideServerMQTTWebRTCOptions,
+  type ClientSideServerMQTTWebRTCServer,
+  type ClientSideServerWorkerInfo,
+} from './mqtt-webrtc'
 
 export interface ClientSideServerOptions {
+  /**
+   * Server identifier used as the css:// namespace / MQTT topic suffix when
+   * the server is started with `.listen()`. Mirrors the role of `host`+`port`
+   * on the Node-side `createServer()` — no network binding happens in-browser,
+   * but every deployed server still needs a stable name.
+   */
+  name?: string
+  /**
+   * Accepted for cross-runtime signature parity with `PLATServerOptions`.
+   * Ignored in-browser — there is no port to bind.
+   */
+  port?: number
+  host?: string
+  cors?: unknown
+  protocol?: string
+  /**
+   * MQTT / STUN / WebRTC transport configuration, used when `.listen()` is
+   * invoked. Anything settable on `runClientSideServer(...)` is accepted here.
+   */
+  transport?: ClientSideServerMQTTWebRTCOptions
+  /** Optional worker pool metadata forwarded to the MQTT signaler. */
+  workerInfo?: ClientSideServerWorkerInfo
+  /** Optional callback fired once the signaler has started. */
+  onStart?: (info: { name: string; connectionUrl: string }) => void | Promise<void>
+  /** Optional callback fired after `.close()` completes. */
+  onStop?: () => void | Promise<void>
   undecoratedMode?: 'GET' | 'POST' | 'private'
   errorExposure?: 'none' | 'message' | 'full'
   allowedMethodPrefixes?: '*' | string[]
@@ -109,6 +141,8 @@ export class PLATClientSideServer {
   private readonly serverCreatedAt = Date.now()
   private openapiHashComputed = false
   private openapiHashValue?: string
+  private signaler?: ClientSideServerMQTTWebRTCServer
+  private connectionUrlCached?: string
 
   constructor(
     private options: ClientSideServerOptions = {},
@@ -157,6 +191,70 @@ export class PLATClientSideServer {
   use(middleware: ClientSideServerMiddleware): this {
     this.middleware.push(middleware)
     return this
+  }
+
+  /**
+   * Start the MQTT/STUN/WebRTC signaler so this server is reachable over
+   * css://. Mirrors `PLATServer.listen(port, host, cb)` — the `port` and
+   * `host` positional args are accepted for signature parity with the Node
+   * server and are ignored in-browser.
+   *
+   * The server `name` is read from `this.options.name`. Transport-level
+   * knobs (mqttBroker, iceServers, etc.) come from `this.options.transport`.
+   *
+   * Returns `this` so calls can chain like the Node server, but resolves
+   * asynchronously since the underlying signaler performs network setup.
+   */
+  async listen(
+    portOrCallback?: number | (() => void),
+    hostOrCallback?: string | (() => void),
+    callbackIfHost?: () => void,
+  ): Promise<this> {
+    let userCallback: (() => void) | undefined
+    if (typeof portOrCallback === 'function') userCallback = portOrCallback
+    else if (typeof hostOrCallback === 'function') userCallback = hostOrCallback
+    else if (typeof callbackIfHost === 'function') userCallback = callbackIfHost
+
+    if (this.signaler) {
+      userCallback?.()
+      return this
+    }
+
+    const name = this.options.name
+    if (!name) {
+      throw new Error('PLATClientSideServer.listen(): `options.name` is required so the css:// server has a stable identifier.')
+    }
+
+    const transport = this.options.transport ?? {}
+    this.signaler = createClientSideServerMQTTWebRTCServer({
+      ...transport,
+      server: this,
+      serverName: name,
+      workerInfo: this.options.workerInfo,
+      instanceInfo: this.options.instanceInfo,
+    })
+
+    await this.signaler.start()
+    this.connectionUrlCached = this.signaler.connectionUrl
+
+    void this.options.onStart?.({ name, connectionUrl: this.connectionUrlCached })
+    userCallback?.()
+    return this
+  }
+
+  /** Stop the signaler if `.listen()` has been called. Safe to call twice. */
+  async close(): Promise<void> {
+    if (!this.signaler) return
+    const signaler = this.signaler
+    this.signaler = undefined
+    this.connectionUrlCached = undefined
+    await signaler.stop()
+    void this.options.onStop?.()
+  }
+
+  /** The css:// URL the server is reachable at, once `.listen()` has resolved. */
+  get connectionUrl(): string | undefined {
+    return this.connectionUrlCached
   }
 
   get tools(): ToolDefinition[] {
