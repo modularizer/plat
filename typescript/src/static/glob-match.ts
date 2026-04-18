@@ -19,15 +19,15 @@ function globToRegExp(pattern: string): RegExp {
   // Escape regex special chars except * and ?
   p = p.replace(/[.+^${}()|[\]\\]/g, '\\$&')
 
-  // Handle ** patterns
-  // /**/  → match any number of path segments (including zero)
-  p = p.replace(/\\\*\\\*\//g, '(?:.+/)?')
-  // ** at end → match everything
-  p = p.replace(/\\\*\\\*/g, '.*')
-  // Single * → match anything except /
-  p = p.replace(/\\\*/g, '[^/]*')
-  // ? → match single char except /
-  p = p.replace(/\\\?/g, '[^/]')
+  // Replace glob tokens with regex equivalents
+  // Replace **/ with (?:.*/)?
+  p = p.replace(/\*\*\//g, '(?:.*/)?')
+  // Replace ** with .*
+  p = p.replace(/\*\*/g, '.*')
+  // Replace * with [^/]*
+  p = p.replace(/\*/g, '[^/]*')
+  // Replace ? with [^/]
+  p = p.replace(/\?/g, '[^/]')
 
   // If pattern has no slash, match against basename anywhere in path
   if (!pattern.includes('/')) {

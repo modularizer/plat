@@ -8,8 +8,18 @@ export interface FileResponseOpts {
   headers?: Record<string, string>
 }
 
-function hasNodeBuffer(value: unknown): value is Buffer {
-  return typeof Buffer !== 'undefined' && value instanceof Buffer
+function hasNodeBuffer(value: unknown): boolean {
+  try {
+    return (
+      typeof Buffer !== 'undefined' &&
+      typeof (globalThis as any).Buffer !== 'undefined' &&
+      !!value &&
+      typeof (value as any).constructor === 'function' &&
+      (value as any).constructor.name === 'Buffer'
+    ) === true;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -77,7 +87,12 @@ export class FileResponse {
     if (this.source instanceof Uint8Array) {
       return this.source
     }
-    return new Uint8Array(this.source)
+    // If it's a Node.js Buffer, convert to Uint8Array (should not happen in browser)
+    if (hasNodeBuffer(this.source)) {
+      return new Uint8Array(this.source as any)
+    }
+    // Fallback: try to coerce to Uint8Array
+    return new Uint8Array(this.source as ArrayBuffer)
   }
 }
 
