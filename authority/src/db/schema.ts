@@ -25,12 +25,17 @@ export const servers = pgTable(
     ownerId: uuid('owner_id')
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
+    endpointType: text('endpoint_type'), // 'http', 'ws', 'webrtc', etc.
+    address: text('address'), // URL or host:port
+    metadata: jsonb('metadata'), // Optional extra info
+    lastUpdated: timestamp('last_updated', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
   },
   (table) => ({
     ownerIdIdx: index('idx_servers_owner_id').on(table.ownerId),
     serverNameIdx: index('idx_servers_server_name').on(table.serverName),
+    endpointTypeIdx: index('idx_servers_endpoint_type').on(table.endpointType),
   }),
 )
 

@@ -35,6 +35,7 @@ import { Admin } from './api/admin-controller.js'
 import { NamespaceAdminService } from './services/namespace-admin-service.js'
 import { getServerOwnershipService } from './storage/index.js'
 import { getConfiguredAuthorityOrigins } from './services/routing-service.js'
+import { ServerController } from './api/server-controller.js'
 
 // Configuration
 const PORT = parseInt(process.env.PORT || '3000')
@@ -963,6 +964,7 @@ const server = createServer(
   AuthController,
   UserController,
   Admin,
+  ServerController,
 )
 
 server.listen(PORT, () => {

@@ -63,6 +63,9 @@ export type AuthorityConnectResponse = AuthorityConnectSuccess | AuthorityConnec
 export interface AuthorityServerRegistration {
   server_name: string
   auth_mode: AuthorityAuthMode
+  endpoint_type?: string // 'http', 'ws', 'webrtc', etc.
+  address?: string // URL or host:port
+  metadata?: Record<string, any>
 }
 
 export type AuthorityRegistrationRejectionCode =
@@ -74,6 +77,7 @@ export type AuthorityRegistrationRejectionCode =
 
 export interface AuthorityAcceptedServerRegistration extends AuthorityServerRegistration {
   owner_google_sub: string
+  last_updated?: string // ISO timestamp
 }
 
 export interface AuthorityRejectedServerRegistration extends AuthorityServerRegistration {
