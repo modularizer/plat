@@ -34,3 +34,4 @@ export * from './types/tools'
 
 // Explicitly export createClient from the correct path
 export { createClient } from './client/openapi-client'
+export { createServer } from './client-side-server/server'

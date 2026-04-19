@@ -1,3 +1,21 @@
+// Utility: check if a WebSocket session's Origin header is allowed
+function isAllowedWebSocketOrigin(session: WebSocketSession): boolean {
+  const allowedOrigins: string[] = [];
+  if (process.env.STUDIO_ORIGIN) allowedOrigins.push(process.env.STUDIO_ORIGIN);
+  if (process.env.SITEVIEWER_ORIGIN) allowedOrigins.push(process.env.SITEVIEWER_ORIGIN);
+  const origin = typeof session.headers.origin === 'string' ? session.headers.origin : Array.isArray(session.headers.origin) ? session.headers.origin[0] : '';
+  if (!origin) return false;
+  for (const allowed of allowedOrigins) {
+    if (origin === allowed) return true;
+    try {
+      const allowedUrl = new URL(allowed);
+      const originUrl = new URL(origin);
+      // Allow subdomains or exact match
+      if (originUrl.host === allowedUrl.host || originUrl.host.endsWith('.' + allowedUrl.host)) return true;
+    } catch {}
+  }
+  return false;
+}
 import {
   Controller,
   POST,
@@ -583,8 +601,17 @@ class ConnectController {
 // WebSocket Controllers (using PLAT decorators!)
 @WebSocketController('/ws/host')
 class HostWebSocketController {
+      // Custom origin enforcement for all WebSocket messages
+      private static enforceOriginOrClose(session: WebSocketSession): boolean {
+        if (!isAllowedWebSocketOrigin(session)) {
+          session.close(4003, 'Origin not allowed');
+          return false;
+        }
+        return true;
+      }
   @WebSocketMessage()
   async hello(msg: { token?: string }, session: WebSocketSession) {
+    if (!HostWebSocketController.enforceOriginOrClose(session)) return;
     const wsKey = `ip:${getSessionIp(session)}`
     const decision = await rateLimitService.checkAllowance('ws_host_msg', wsKey, WS_HOST_MSG_RATE_LIMIT_PER_30S)
     if (!decision.allowed) {
@@ -632,6 +659,7 @@ class HostWebSocketController {
 
   @WebSocketMessage()
   async register_online(msg: { servers?: any[] }, session: WebSocketSession) {
+    if (!HostWebSocketController.enforceOriginOrClose(session)) return;
     const wsKey = `ip:${getSessionIp(session)}`
     const decision = await rateLimitService.checkAllowance('ws_host_msg', wsKey, WS_HOST_MSG_RATE_LIMIT_PER_30S)
     if (!decision.allowed) {
@@ -681,6 +709,7 @@ class HostWebSocketController {
 
   @WebSocketMessage()
   async register_offline(msg: { server_names?: string[] }, session: WebSocketSession) {
+    if (!HostWebSocketController.enforceOriginOrClose(session)) return;
     const wsKey = `ip:${getSessionIp(session)}`
     const decision = await rateLimitService.checkAllowance('ws_host_msg', wsKey, WS_HOST_MSG_RATE_LIMIT_PER_30S)
     if (!decision.allowed) {
@@ -712,6 +741,7 @@ class HostWebSocketController {
 
   @WebSocketMessage()
   async connect_answer(msg: { connection_id?: string; answer?: any }, session: WebSocketSession) {
+    if (!HostWebSocketController.enforceOriginOrClose(session)) return;
     const wsKey = `ip:${getSessionIp(session)}`
     const decision = await rateLimitService.checkAllowance('ws_host_msg', wsKey, WS_HOST_MSG_RATE_LIMIT_PER_30S)
     if (!decision.allowed) {
@@ -734,6 +764,7 @@ class HostWebSocketController {
 
   @WebSocketMessage()
   async connect_reject(msg: { connection_id?: string; reason?: string }, session: WebSocketSession) {
+    if (!HostWebSocketController.enforceOriginOrClose(session)) return;
     const wsKey = `ip:${getSessionIp(session)}`
     const decision = await rateLimitService.checkAllowance('ws_host_msg', wsKey, WS_HOST_MSG_RATE_LIMIT_PER_30S)
     if (!decision.allowed) {
@@ -756,6 +787,7 @@ class HostWebSocketController {
 
   @WebSocketMessage()
   async ping(msg: any, session: WebSocketSession) {
+    if (!HostWebSocketController.enforceOriginOrClose(session)) return;
     const wsKey = `ip:${getSessionIp(session)}`
     const decision = await rateLimitService.checkAllowance('ws_host_msg', wsKey, WS_HOST_MSG_RATE_LIMIT_PER_30S)
     if (!decision.allowed) {
@@ -775,6 +807,7 @@ class HostWebSocketController {
 
   @WebSocketMessage()
   async suppress_client(msg: any, session: WebSocketSession) {
+    if (!HostWebSocketController.enforceOriginOrClose(session)) return;
     const wsKey = `ip:${getSessionIp(session)}`
     const decision = await rateLimitService.checkAllowance('ws_host_msg', wsKey, WS_HOST_MSG_RATE_LIMIT_PER_30S)
     if (!decision.allowed) {
@@ -906,14 +939,29 @@ class PresenceWebSocketController {
 }
 
 // Bootstrap PLAT server with WebSocket support
+import { getDatabase } from './db/client.js'
+import { servers as serversTable } from './db/schema.js'
+import { eq } from 'drizzle-orm'
+
 const server = createServer(
   {
     port: PORT,
     host: HOST,
     cors: {
-      origin: '*',
-      methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-      headers: ['Content-Type', 'Authorization', 'X-Admin-Token', 'X-Admin-Session'],
+      origin: ['http://localhost:5173', 'http://localhost:3000', 'http://localhost:3001'],
+      credentials: true,
+      methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+      headers: [
+        'Content-Type',
+        'Authorization',
+        'X-Admin-Token',
+        'X-Admin-Session',
+        'Accept',
+        'Origin',
+        'X-Requested-With',
+      ],
+      exposedHeaders: ['Content-Range', 'X-Content-Range'],
+      maxAge: 86400,
     },
     protocolPlugins: [createWebSocketProtocolPlugin([HostWebSocketController, PresenceWebSocketController])],
     async onError(req, _res, err, statusCode) {
@@ -928,20 +976,14 @@ const server = createServer(
     },
     auth: {
       verify(mode, req, ctx) {
-        // 'jwt' mode: verify JWT, return decoded payload as user (sub, email, name, roles, etc.)
-        // 'admin' mode: also accept static ADMIN_TOKEN, otherwise verify JWT + check admin role
         if (mode === 'jwt' || mode === 'admin') {
-          // Static admin token shortcut
           if (mode === 'admin') {
             const token = getAdminAuthToken(req)
             if (token === ADMIN_TOKEN) {
               return { role: 'admin', source: 'static-token' }
             }
           }
-
-          // Delegate to plat's built-in JWT auth (extracts Bearer token, verifies, returns decoded payload)
           const payload = jwtAuth.verify('jwt', req, ctx)
-
           if (mode === 'admin') {
             const roles = Array.isArray(payload.roles) ? payload.roles : []
             if (!roles.includes('admin')) {
@@ -951,10 +993,8 @@ const server = createServer(
               throw new HttpError(403, 'not_admin')
             }
           }
-
           return payload
         }
-
         return { mode: 'public' }
       },
     },

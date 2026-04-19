@@ -65,6 +65,7 @@ export interface AuthorityServerRegistration {
   auth_mode: AuthorityAuthMode
   endpoint_type?: string // 'http', 'ws', 'webrtc', etc.
   address?: string // URL or host:port
+  allowed_origins?: string[]
   metadata?: Record<string, any>
 }
 

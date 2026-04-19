@@ -27,6 +27,7 @@ export const servers = pgTable(
       .references(() => users.id, { onDelete: 'cascade' }),
     endpointType: text('endpoint_type'), // 'http', 'ws', 'webrtc', etc.
     address: text('address'), // URL or host:port
+    allowedOrigins: jsonb('allowed_origins').default([]), // Array of allowed origins for CORS
     metadata: jsonb('metadata'), // Optional extra info
     lastUpdated: timestamp('last_updated', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),

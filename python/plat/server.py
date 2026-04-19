@@ -47,7 +47,7 @@ from .rpc_protocol_plugin import create_rpc_protocol_plugin, RpcProtocolPluginOp
 from .routing import generate_route_variants
 from .file_queue_protocol_plugin import create_file_queue_protocol_plugin, FileQueueProtocolPluginOptions
 from .protocol_plugin import ServerHostContext, ServerTransportRuntime
-from .server_types import ControllerMeta, FileQueueOptions, RouteContext, RouteMeta, PLATServerOptions
+from .server_types import ControllerMeta, FileQueueOptions, RouteContext, RouteMeta, PLATServerOptions, WebRTCOptions
 from .tools import format_tool
 from .transports import CallEnvelope, ResolvedOperation
 from .authority_server import create_authority_server_controller
@@ -186,6 +186,8 @@ class PLATServer:
         self.registered_method_names: set[str] = set()
         self.registered_controller_names: set[str] = set()
         self._file_queue_plugin: Any | None = None
+        self._webrtc_plugin: Any | None = None
+        self._server_created_at: int = int(time.time() * 1000)
         # File queue thread now managed by file_queue_protocol_plugin
         self._setup_plugin_defaults()
 
@@ -588,7 +590,12 @@ class PLATServer:
             ))
             self._file_queue_plugin = fq_plugin
 
-        built_in_plugins = [p for p in [rpc_plugin, fq_plugin] if p is not None]
+        webrtc_plugin = None
+        if self.options.webrtc is not None:
+            webrtc_plugin = self._build_webrtc_plugin(self.options.webrtc)
+            self._webrtc_plugin = webrtc_plugin
+
+        built_in_plugins = [p for p in [rpc_plugin, fq_plugin, webrtc_plugin] if p is not None]
         all_plugins = built_in_plugins + list(self.options.protocol_plugins)
         for plugin in all_plugins:
             if hasattr(plugin, "setup"):
@@ -634,6 +641,55 @@ class PLATServer:
             ))
             self._file_queue_plugin.setup(self.create_transport_runtime())
         self._file_queue_plugin.process_once()
+
+    def _build_webrtc_plugin(self, webrtc: WebRTCOptions) -> Any:
+        from .css_identity import CSSAuthorityKeyPair, CSSAuthorityRecord
+        from .css_server_transport_plugin import (
+            CSSServerTransportConfig,
+            create_css_server_transport_plugin,
+        )
+
+        identity_key_pair = webrtc.identity_key_pair
+        if identity_key_pair is None:
+            raise ValueError("WebRTCOptions.identity_key_pair is required to serve via css://")
+        if not isinstance(identity_key_pair, CSSAuthorityKeyPair):
+            identity_key_pair = CSSAuthorityKeyPair(**identity_key_pair)
+
+        authority_record = webrtc.authority_record
+        if authority_record is not None and not isinstance(authority_record, CSSAuthorityRecord):
+            authority_record = CSSAuthorityRecord(**authority_record)
+
+        from .css_shared import (
+            DEFAULT_CLIENT_SIDE_SERVER_MQTT_BROKER,
+            DEFAULT_CLIENT_SIDE_SERVER_MQTT_TOPIC,
+        )
+        config = CSSServerTransportConfig(
+            server_name=webrtc.name,
+            identity_key_pair=identity_key_pair,
+            authority_record=authority_record,
+            mqtt_broker=webrtc.mqtt_broker or DEFAULT_CLIENT_SIDE_SERVER_MQTT_BROKER,
+            mqtt_topic=webrtc.mqtt_topic or DEFAULT_CLIENT_SIDE_SERVER_MQTT_TOPIC,
+            connection_timeout=webrtc.connection_timeout,
+            server_id_prefix=webrtc.server_id_prefix,
+            ice_servers=list(webrtc.ice_servers) if webrtc.ice_servers else None,
+        )
+
+        server_self = self
+
+        class _ServerInfoProvider:
+            def get_openapi_spec(self_inner) -> dict[str, Any] | None:
+                try:
+                    return server_self.app.openapi()
+                except Exception:
+                    return None
+
+            def get_tools_list(self_inner) -> list[Any]:
+                return [format_tool(tool, "json") for tool in server_self.tools.values()]
+
+            def get_server_started_at(self_inner) -> int:
+                return server_self._server_created_at
+
+        return create_css_server_transport_plugin(config, info_provider=_ServerInfoProvider())
 
     def create_transport_runtime(self) -> ServerTransportRuntime:
         return ServerTransportRuntime(

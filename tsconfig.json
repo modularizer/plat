@@ -1,0 +1,7 @@
+{
+  "files": [
+    "authority/tsconfig.json",
+    "typescript/tsconfig.json"
+  ]
+}
+

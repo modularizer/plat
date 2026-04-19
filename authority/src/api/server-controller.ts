@@ -12,7 +12,7 @@ class ServerController {
    */
   @POST({ auth: 'jwt' })
   async register(
-    input: { server_name: string; endpoint_type: string; address: string; metadata?: Record<string, any> },
+    input: { server_name: string; endpoint_type: string; address: string; allowed_origins?: string[]; metadata?: Record<string, any> },
     ctx: RouteContext,
   ) {
     const googleSub = ctx.auth?.user?.sub
@@ -29,6 +29,7 @@ class ServerController {
         ownerId: googleSub,
         endpointType: input.endpoint_type,
         address: input.address,
+        allowedOrigins: input.allowed_origins ?? [],
         metadata: input.metadata ?? {},
         lastUpdated: new Date(),
       })
@@ -37,6 +38,7 @@ class ServerController {
         set: {
           endpointType: input.endpoint_type,
           address: input.address,
+          allowedOrigins: input.allowed_origins ?? [],
           metadata: input.metadata ?? {},
           lastUpdated: new Date(),
         },
@@ -53,13 +55,14 @@ class ServerController {
     const record = await db.select({
       endpointType: servers.endpointType,
       address: servers.address,
+      allowedOrigins: servers.allowedOrigins,
       metadata: servers.metadata,
       lastUpdated: servers.lastUpdated,
     }).from(servers).where(eq(servers.serverName, server_name)).limit(1)
     const row = record[0]
     if (!row) throw new HttpError(404, 'not_found')
-    const { endpointType, address, metadata, lastUpdated } = row
-    return { endpoint_type: endpointType, address, metadata, last_updated: lastUpdated }
+    const { endpointType, address, allowedOrigins, metadata, lastUpdated } = row
+    return { endpoint_type: endpointType, address, allowed_origins: allowedOrigins, metadata, last_updated: lastUpdated }
   }
 
   /**
@@ -84,6 +87,7 @@ class ServerController {
       serverName: servers.serverName,
       endpointType: servers.endpointType,
       address: servers.address,
+      allowedOrigins: servers.allowedOrigins,
       metadata: servers.metadata,
       lastUpdated: servers.lastUpdated,
     }).from(servers).where(where)
@@ -92,6 +96,7 @@ class ServerController {
         server_name: r.serverName,
         endpoint_type: r.endpointType,
         address: r.address,
+        allowed_origins: r.allowedOrigins,
         metadata: r.metadata,
         last_updated: r.lastUpdated,
       })),
@@ -100,6 +105,7 @@ class ServerController {
 }
 
 export { ServerController }
+
 
 
 

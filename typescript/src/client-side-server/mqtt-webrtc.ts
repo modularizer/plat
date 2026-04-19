@@ -71,7 +71,17 @@ import {
   parseClientSideServerAddress,
   type ClientSideServerAddress,
 } from './signaling'
-import type { PLATClientSideServer } from './server'
+
+/**
+ * Minimal interface the MQTT/WebRTC signaler needs to drive a server.
+ * Both the browser-side `PLATClientSideServer` and server-side transports
+ * (e.g. the Node `PLATServer` WebRTC plugin, or an HTTP-forwarding bridge)
+ * implement this.
+ */
+export interface ClientSideServerRequestHandler {
+  getServerInfo(): Promise<ClientSideServerInstanceInfo>
+  serveChannel(channel: ClientSideServerChannel): () => void
+}
 
 export const DEFAULT_CLIENT_SIDE_SERVER_MQTT_BROKER = 'wss://broker.emqx.io:8084/mqtt'
 export const DEFAULT_CLIENT_SIDE_SERVER_MQTT_TOPIC = 'mrtchat/plat-css'
@@ -205,7 +215,7 @@ export interface ClientSideServerMQTTWebRTCOptions {
 
 export interface ClientSideServerMQTTWebRTCServerOptions extends ClientSideServerMQTTWebRTCOptions {
   serverName: string
-  server: PLATClientSideServer
+  server: ClientSideServerRequestHandler
   workerInfo?: ClientSideServerWorkerInfo
   /**
    * Override or supplement the instance info from the PLATClientSideServer.

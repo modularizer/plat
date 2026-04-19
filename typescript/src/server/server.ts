@@ -21,6 +21,7 @@ import type { PLATServerCallEnvelope, PLATServerResolvedOperation } from './tran
 import type { PLATServerHostContext, PLATServerTransportRuntime } from './protocol-plugin'
 import { createRpcProtocolPlugin, type RpcProtocolPluginOptions } from './rpc-protocol-plugin'
 import { createFileQueueProtocolPlugin } from './file-queue-protocol-plugin'
+import { createWebRTCProtocolPlugin } from './webrtc-plugin'
 import { PLATOperationRegistry } from './operation-registry'
 import { PLATServerCore, type RegisteredStaticFolder } from './core'
 import { createAuthorityServerController } from './authority-server'
@@ -46,6 +47,8 @@ export class PLATServer {
     private staticFolders: RegisteredStaticFolder[] = []
     private pendingRootFolder?: RegisteredStaticFolder
     private core: PLATServerCore
+    private teardownRuntimeCallbacks: Array<() => void | Promise<void>> = []
+    private readonly serverCreatedAt = Date.now()
 
     constructor(options: PLATServerOptions = {}, ...ControllerClasses: (new () => any)[]) {
         this.app = express()
@@ -651,50 +654,124 @@ export class PLATServer {
     /**
      * Create CORS middleware
      */
-    private createCORSMiddleware(corsConfig: CORSOptions | boolean): any {
-        const config: CORSOptions =
-            corsConfig === true
-                ? { origin: '*', credentials: false }
-                : corsConfig === false
+    private createCORSMiddleware(corsConfig: CORSOptions | boolean | ((req: Request) => boolean | CORSOptions | undefined | Promise<boolean | CORSOptions | undefined>)): any {
+        // If corsConfig is a function, handle per-request
+        if (typeof corsConfig === 'function') {
+            return async (req: Request, res: Response, next: NextFunction) => {
+                try {
+                    const result = await corsConfig(req)
+                    if (!result) {
+                        // CORS not allowed
+                        if (req.method === 'OPTIONS') {
+                            res.status(403).end()
+                            return
+                        }
+                        return next()
+                    }
+                    const config: CORSOptions = typeof result === 'object' ? result : { origin: '*' }
+                    const requestOrigin = req.headers.origin as string
+                    let origin = '*'
+                    
+                    if (typeof config.origin === 'string') {
+                        origin = config.origin
+                    } else if (Array.isArray(config.origin)) {
+                        if (requestOrigin && config.origin.includes(requestOrigin)) {
+                            origin = requestOrigin
+                        } else {
+                            origin = config.origin[0] ?? '*'
+                        }
+                    } else if (typeof config.origin === 'function') {
+                        if (requestOrigin && config.origin(requestOrigin)) {
+                            origin = requestOrigin
+                        }
+                    }
+
+                    res.setHeader('Access-Control-Allow-Origin', origin)
+                    res.setHeader('Vary', 'Origin')
+                    
+                    if (config.credentials) {
+                        res.setHeader('Access-Control-Allow-Credentials', 'true')
+                    }
+                    if (config.methods) {
+                        res.setHeader('Access-Control-Allow-Methods', config.methods.join(', '))
+                    } else if (req.method === 'OPTIONS') {
+                        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH')
+                    }
+                    if (config.headers) {
+                        res.setHeader('Access-Control-Allow-Headers', config.headers.join(', '))
+                    } else if (req.method === 'OPTIONS' && req.headers['access-control-request-headers']) {
+                        res.setHeader('Access-Control-Allow-Headers', req.headers['access-control-request-headers'] as string)
+                    }
+                    if (config.exposedHeaders) {
+                        res.setHeader('Access-Control-Expose-Headers', config.exposedHeaders.join(', '))
+                    }
+                    if (config.maxAge) {
+                        res.setHeader('Access-Control-Max-Age', String(config.maxAge))
+                    }
+                    if (req.method === 'OPTIONS') {
+                        res.status(204).end()
+                        return
+                    }
+                    next()
+                } catch (err) {
+                    // On error, disallow CORS
+                    if (req.method === 'OPTIONS') {
+                        res.status(500).end()
+                        return
+                    }
+                    next()
+                }
+            }
+        } else {
+            // Static config (original logic)
+            const config: CORSOptions =
+                corsConfig === true
                     ? { origin: '*', credentials: false }
-                    : corsConfig
+                    : corsConfig === false
+                        ? { origin: '*', credentials: false }
+                        : corsConfig
+            return (req: Request, res: Response, next: NextFunction) => {
+                const requestOrigin = req.headers.origin as string
+                let origin = '*'
+                
+                if (typeof config.origin === 'string') {
+                    origin = config.origin
+                } else if (Array.isArray(config.origin)) {
+                    if (requestOrigin && config.origin.includes(requestOrigin)) {
+                        origin = requestOrigin
+                    } else {
+                        origin = config.origin[0] ?? '*'
+                    }
+                }
 
-        return (req: Request, res: Response, next: NextFunction) => {
-            const origin =
-                typeof config.origin === 'string'
-                    ? config.origin
-                    : Array.isArray(config.origin)
-                        ? config.origin[0] ?? '*'
-                        : '*'
+                res.setHeader('Access-Control-Allow-Origin', origin)
+                res.setHeader('Vary', 'Origin')
 
-            res.setHeader('Access-Control-Allow-Origin', origin)
-
-            if (config.credentials) {
-                res.setHeader('Access-Control-Allow-Credentials', 'true')
+                if (config.credentials) {
+                    res.setHeader('Access-Control-Allow-Credentials', 'true')
+                }
+                if (config.methods) {
+                    res.setHeader('Access-Control-Allow-Methods', config.methods.join(', '))
+                } else if (req.method === 'OPTIONS') {
+                    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH')
+                }
+                if (config.headers) {
+                    res.setHeader('Access-Control-Allow-Headers', config.headers.join(', '))
+                } else if (req.method === 'OPTIONS' && req.headers['access-control-request-headers']) {
+                    res.setHeader('Access-Control-Allow-Headers', req.headers['access-control-request-headers'] as string)
+                }
+                if (config.exposedHeaders) {
+                    res.setHeader('Access-Control-Expose-Headers', config.exposedHeaders.join(', '))
+                }
+                if (config.maxAge) {
+                    res.setHeader('Access-Control-Max-Age', String(config.maxAge))
+                }
+                if (req.method === 'OPTIONS') {
+                    res.status(204).end()
+                    return
+                }
+                next()
             }
-
-            if (config.methods) {
-                res.setHeader('Access-Control-Allow-Methods', config.methods.join(', '))
-            }
-
-            if (config.headers) {
-                res.setHeader('Access-Control-Allow-Headers', config.headers.join(', '))
-            }
-
-            if (config.exposedHeaders) {
-                res.setHeader('Access-Control-Expose-Headers', config.exposedHeaders.join(', '))
-            }
-
-            if (config.maxAge) {
-                res.setHeader('Access-Control-Max-Age', String(config.maxAge))
-            }
-
-            if (req.method === 'OPTIONS') {
-                res.status(200).end()
-                return
-            }
-
-            next()
         }
     }
 
@@ -1370,6 +1447,13 @@ export class PLATServer {
                 config: this.options.fileQueue || undefined,
             }),
         ]
+        if (this.options.webrtc) {
+            builtInPlugins.push(createWebRTCProtocolPlugin(this.options.webrtc, {
+                getOpenAPISpec: () => this.options.openapi,
+                getToolsList: () => Array.from(this.tools.values()),
+                getServerStartedAt: () => this.serverCreatedAt,
+            }))
+        }
         const transportRuntime = this.createTransportRuntime()
         const allPlugins = [...builtInPlugins, ...(this.options.protocolPlugins ?? [])]
         for (const plugin of allPlugins) {
@@ -1379,6 +1463,9 @@ export class PLATServer {
             void plugin.attach?.(transportRuntime, hostContext)
             void plugin.start?.(transportRuntime)
         }
+        this.teardownRuntimeCallbacks = allPlugins
+            .filter((p) => typeof p.teardown === 'function')
+            .map((p) => () => p.teardown!(transportRuntime))
         // Register root static folder as lowest-priority fallback
         if (this.pendingRootFolder) {
             const rootFolder = this.pendingRootFolder
@@ -1402,6 +1489,14 @@ export class PLATServer {
     }
 
     async close(): Promise<void> {
+        for (const cb of this.teardownRuntimeCallbacks) {
+            try {
+                await cb()
+            } catch (err) {
+                this.logger.error('[plugin teardown] error during close', err as any)
+            }
+        }
+        this.teardownRuntimeCallbacks = []
         if (!this.httpServer) return
         await new Promise<void>((resolve, reject) => {
             this.httpServer?.close((error) => {

@@ -85,6 +85,24 @@ class FileQueueOptions:
 
 
 @dataclass
+class WebRTCOptions:
+    """Configuration for serving a PLATServer over WebRTC.
+
+    When set on PLATServerOptions.webrtc, the server additionally starts an
+    MQTT-signalled WebRTC endpoint reachable at ``css://<name>``.
+    """
+    name: str
+    mqtt_broker: str | None = None
+    mqtt_topic: str | None = None
+    ice_servers: list[str] = field(default_factory=list)
+    connection_timeout: float = 15.0
+    server_id_prefix: str = "pyserver"
+    authority_record: Any = None
+    identity_key_pair: Any = None
+    trust_on_first_use: bool = True
+
+
+@dataclass
 class PLATServerOptions:
     error_exposure: ErrorExposure = "message"
     cors: CORSOptions | bool = False
@@ -129,4 +147,5 @@ class PLATServerOptions:
         }
     )
     file_queue: FileQueueOptions | bool = False
+    webrtc: WebRTCOptions | None = None
     protocol_plugins: list[Any] = field(default_factory=list)

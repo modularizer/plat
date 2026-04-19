@@ -17,6 +17,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
 
   redis:
     image: redis:7-alpine
@@ -48,6 +50,8 @@ services:
       HOST_AUTH_MODE: ${HOST_AUTH_MODE:-insecure_token_sub}
       OAUTH_ALLOWED_REDIRECT_ORIGINS: ${OAUTH_ALLOWED_REDIRECT_ORIGINS:-http://localhost:3001}
       TRACEBACK_MAX_LINES: ${TRACEBACK_MAX_LINES:-0}
+      STUDIO_ORIGIN: ${STUDIO_ORIGIN:-}
+      SITEVIEWER_ORIGIN: ${SITEVIEWER_ORIGIN:-}
     ports:
       - "${PORT:-3000}:${PORT:-3000}"
     depends_on:

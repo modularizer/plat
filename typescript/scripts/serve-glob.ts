@@ -58,12 +58,20 @@ async function main() {
       const ControllerClass = module[name]
       if (typeof ControllerClass === 'function') {
         controllerClasses.push(ControllerClass as new () => any)
+      } else {
+        console.warn(`⚠️  Controller class '${name}' not found or is not a constructor in file: ${file.getFilePath()}`)
       }
     }
   }
 
   if (controllerClasses.length === 0) {
     throw new Error(`No @Controller classes found for glob: ${srcGlob}`)
+  }
+  // Extra check: ensure all controllerClasses are constructors
+  for (const ControllerClass of controllerClasses) {
+    if (typeof ControllerClass !== 'function' || !ControllerClass.prototype) {
+      throw new Error(`ControllerClass is not a constructor: ${ControllerClass}`)
+    }
   }
 
   const openapiDoc = openapi ? (await generateOpenAPISpecFromGlob(srcGlob, projectRoot)).doc : undefined

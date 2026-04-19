@@ -2,11 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import json
-import ssl
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import Any
-from urllib.parse import urlparse
 
 from .css_identity import (
     CSSAuthorityRecord,
@@ -18,17 +16,22 @@ from .css_identity import (
     trust_on_first_use,
     verify_server_identity,
 )
+from .css_shared import (
+    AsyncMQTTClient,
+    DEFAULT_CLIENT_SIDE_SERVER_ICE_SERVERS,
+    DEFAULT_CLIENT_SIDE_SERVER_MQTT_BROKER,
+    DEFAULT_CLIENT_SIDE_SERVER_MQTT_TOPIC,
+    current_millis,
+    deserialize_aiortc_candidate,
+    load_aiortc,
+    load_paho,
+    parse_client_side_server_address,
+    parse_mqtt_broker_url,
+    parse_signaling_payload,
+    random_id,
+    serialize_aiortc_candidate,
+)
 from .transport_plugin import TransportRequest, TransportResult
-
-DEFAULT_CLIENT_SIDE_SERVER_MQTT_BROKER = "wss://broker.emqx.io:8084/mqtt"
-DEFAULT_CLIENT_SIDE_SERVER_MQTT_TOPIC = "mrtchat/plat-css"
-DEFAULT_CLIENT_SIDE_SERVER_ICE_SERVERS = [
-    "stun:stun.l.google.com:19302",
-    "stun:stun1.l.google.com:19302",
-    "stun:stun2.l.google.com:19302",
-    "stun:stun3.l.google.com:19302",
-    "stun:stun4.l.google.com:19302",
-]
 
 
 @dataclass
@@ -128,13 +131,13 @@ async def _send_css_request(
     *,
     is_async: bool,
 ) -> dict[str, Any]:
-    aiortc = _aiortc()
-    paho = _paho()
+    aiortc = load_aiortc()
+    paho = load_paho()
 
     address = parse_client_side_server_address(request.base_url)
     broker = parse_mqtt_broker_url(config.mqtt_broker)
     loop = asyncio.get_running_loop()
-    mqtt = _AsyncMQTTClient(paho, broker, loop=loop)
+    mqtt = AsyncMQTTClient(paho, broker, loop=loop)
     await mqtt.connect()
     await mqtt.subscribe(config.mqtt_topic)
 
@@ -201,7 +204,7 @@ async def _send_css_request(
         )
 
     async def _mqtt_messages() -> None:
-        async for text in mqtt.messages():
+        async for _topic, text in mqtt.messages():
             payload = parse_signaling_payload(text)
             if payload is None:
                 continue
@@ -320,157 +323,3 @@ async def _send_css_request(
         await peer.close()
 
 
-class _AsyncMQTTClient:
-    def __init__(self, paho: Any, broker: SimpleNamespace, *, loop: asyncio.AbstractEventLoop) -> None:
-        self._loop = loop
-        self._queue: asyncio.Queue[str] = asyncio.Queue()
-        self._connected = loop.create_future()
-        self._subscribed = loop.create_future()
-        self._paho = paho
-        self._broker = broker
-        transport = "websockets" if broker.transport == "websockets" else "tcp"
-        self._client = paho.Client(transport=transport)
-        if broker.websocket_path:
-            self._client.ws_set_options(path=broker.websocket_path)
-        if broker.secure:
-            self._client.tls_set(cert_reqs=ssl.CERT_REQUIRED)
-        self._client.on_connect = self._on_connect
-        self._client.on_message = self._on_message
-        self._client.on_subscribe = self._on_subscribe
-
-    async def connect(self) -> None:
-        await asyncio.to_thread(
-            self._client.connect,
-            self._broker.host,
-            self._broker.port,
-            60,
-        )
-        self._client.loop_start()
-        await self._connected
-
-    async def subscribe(self, topic: str) -> None:
-        self._subscribed = self._loop.create_future()
-        self._client.subscribe(topic)
-        await self._subscribed
-
-    async def publish(self, topic: str, payload: dict[str, Any]) -> None:
-        info = self._client.publish(topic, json.dumps(payload))
-        await asyncio.to_thread(info.wait_for_publish)
-
-    async def messages(self):
-        while True:
-            yield await self._queue.get()
-
-    async def close(self) -> None:
-        await asyncio.to_thread(self._client.disconnect)
-        self._client.loop_stop()
-
-    def _on_connect(self, client: Any, userdata: Any, flags: Any, reason_code: Any, properties: Any = None) -> None:
-        if not self._connected.done():
-            self._loop.call_soon_threadsafe(self._connected.set_result, None)
-
-    def _on_message(self, client: Any, userdata: Any, msg: Any) -> None:
-        text = msg.payload.decode("utf-8") if isinstance(msg.payload, bytes) else str(msg.payload)
-        self._loop.call_soon_threadsafe(self._queue.put_nowait, text)
-
-    def _on_subscribe(self, client: Any, userdata: Any, mid: Any, granted_qos: Any, properties: Any = None) -> None:
-        if not self._subscribed.done():
-            self._loop.call_soon_threadsafe(self._subscribed.set_result, None)
-
-
-def parse_client_side_server_address(value: str) -> SimpleNamespace:
-    parsed = urlparse(value)
-    if parsed.scheme != "css":
-        raise ValueError(f"Client-side server URLs must use css://, got {value}")
-    server_name = parsed.netloc or parsed.path.lstrip("/")
-    return SimpleNamespace(href=value, server_name=server_name)
-
-
-def parse_mqtt_broker_url(value: str) -> SimpleNamespace:
-    parsed = urlparse(value)
-    if not parsed.scheme or not parsed.hostname:
-        raise ValueError(f"Invalid MQTT broker URL: {value}")
-    if parsed.scheme in {"wss", "ws"}:
-        transport = "websockets"
-        secure = parsed.scheme == "wss"
-        port = parsed.port or (8084 if secure else 8083)
-    else:
-        transport = "tcp"
-        secure = parsed.scheme in {"mqtts", "ssl", "tls"}
-        port = parsed.port or (8883 if secure else 1883)
-    return SimpleNamespace(
-        host=parsed.hostname,
-        port=port,
-        transport=transport,
-        secure=secure,
-        websocket_path=parsed.path or "/mqtt",
-    )
-
-
-def parse_signaling_payload(value: str) -> dict[str, Any] | None:
-    try:
-        parsed = json.loads(value)
-    except Exception:
-        return None
-    return parsed if isinstance(parsed, dict) else None
-
-
-def serialize_aiortc_candidate(candidate: Any, aiortc: Any) -> dict[str, Any]:
-    candidate_to_sdp = aiortc.sdp.candidate_to_sdp
-    return {
-        "candidate": f"candidate:{candidate_to_sdp(candidate)}",
-        "sdpMid": getattr(candidate, "sdpMid", "0"),
-        "sdpMLineIndex": getattr(candidate, "sdpMLineIndex", 0),
-    }
-
-
-def deserialize_aiortc_candidate(payload: dict[str, Any], aiortc: Any) -> Any:
-    candidate_from_sdp = aiortc.sdp.candidate_from_sdp
-    candidate_line = str(payload.get("candidate") or "")
-    if candidate_line.startswith("candidate:"):
-        candidate_line = candidate_line[len("candidate:") :]
-    candidate = candidate_from_sdp(candidate_line)
-    candidate.sdpMid = payload.get("sdpMid")
-    candidate.sdpMLineIndex = payload.get("sdpMLineIndex")
-    return candidate
-
-
-def random_id(prefix: str) -> str:
-    import uuid
-
-    return f"{prefix}-{uuid.uuid4()}"
-
-
-def current_millis() -> int:
-    import time
-
-    return int(time.time() * 1000)
-
-
-def _aiortc():
-    try:
-        import aiortc
-        import aiortc.sdp
-    except ImportError as exc:
-        raise ImportError(
-            "css:// transport requires optional dependencies aiortc and paho-mqtt. "
-            'Install them with pip install "modularizer-plat[css]".'
-        ) from exc
-    return SimpleNamespace(
-        RTCPeerConnection=aiortc.RTCPeerConnection,
-        RTCSessionDescription=aiortc.RTCSessionDescription,
-        RTCConfiguration=aiortc.RTCConfiguration,
-        RTCIceServer=aiortc.RTCIceServer,
-        sdp=aiortc.sdp,
-    )
-
-
-def _paho():
-    try:
-        import paho.mqtt.client as mqtt
-    except ImportError as exc:
-        raise ImportError(
-            "css:// transport requires optional dependencies aiortc and paho-mqtt. "
-            'Install them with pip install "modularizer-plat[css]".'
-        ) from exc
-    return mqtt

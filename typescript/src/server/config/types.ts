@@ -3,6 +3,7 @@ import { Logger } from "./logger"
 import type { InMemoryCallSessionController } from "../call-sessions"
 import type { PLATServerProtocolPlugin } from "../protocol-plugin"
 import type { PLATAuthorityServerOptions } from "../authority-server"
+import type { PLATServerWebRTCOptions } from "../webrtc-plugin"
 
 
 export interface AuthHandler {
@@ -10,6 +11,7 @@ export interface AuthHandler {
 }
 
 export type Serializer = (value: any) => any
+
 
 
 export interface CORSOptions {
@@ -20,6 +22,8 @@ export interface CORSOptions {
     exposedHeaders?: string[]
     maxAge?: number
 }
+
+export type DynamicCORSHandler = (req: any) => boolean | CORSOptions | undefined | Promise<boolean | CORSOptions | undefined>;
 
 export interface FileQueueOptions {
     inbox: string
@@ -53,8 +57,9 @@ export interface PLATServerOptions {
 
     /**
      * CORS configuration
+     * Can be a static object, boolean, or a function (sync or async) returning CORSOptions | boolean | undefined
      */
-    cors?: CORSOptions | boolean
+    cors?: CORSOptions | boolean | DynamicCORSHandler
 
     /**
      * Default response headers
@@ -251,4 +256,13 @@ export interface PLATServerOptions {
      * Extra protocol plugins. Built-in HTTP/WS/file behavior still works by default.
      */
     protocolPlugins?: PLATServerProtocolPlugin[]
+
+    /**
+     * Serve this server over WebRTC (in addition to HTTP).
+     *
+     * When set, `listen()` will start an MQTT-signalled WebRTC endpoint reachable
+     * at `css://<name>`, dispatching requests through the same controllers/routes
+     * as HTTP. Requires the optional `@roamhq/wrtc` dependency.
+     */
+    webrtc?: PLATServerWebRTCOptions
 }

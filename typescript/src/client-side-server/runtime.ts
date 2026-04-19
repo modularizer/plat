@@ -367,35 +367,63 @@ function resolveClientSideServerDefinition(
   module: ClientSideServerSourceModule,
   fallbackServerName?: string,
 ): ClientSideServerDefinition {
+  console.debug('[PLAT] resolveClientSideServerDefinition', { 
+    hasDefault: Boolean(module.default), 
+    hasClientSideServer: Boolean(module.clientSideServer),
+    fallbackServerName 
+  })
   if (module.clientSideServer) return module.clientSideServer
 
   if (module.default && isClientSideServerDefinition(module.default)) {
     return module.default
   }
 
+  // Lenient fallback: try to find controllers anywhere
   const controllers = resolveControllers(module)
-  if (fallbackServerName) {
-    return { serverName: fallbackServerName, controllers }
+  const name = (module.default as any)?.serverName || (module.default as any)?.name || fallbackServerName || 'preview-server'
+  
+  return { 
+    serverName: name, 
+    controllers 
   }
-
-  throw new Error('Expected the source module to define a server name with serveClientSideServer(name, controllers)')
 }
 
-function resolveControllers(module: ClientSideServerSourceModule): ControllerClass[] {
+function resolveControllers(module: any): ControllerClass[] {
+  console.debug('[PLAT] resolveControllers', { moduleKeys: module ? Object.keys(module) : [] })
+  if (!module) return []
   if (Array.isArray(module.controllers)) return module.controllers
   if (Array.isArray(module.default)) return module.default
-  if (module.default && 'controllers' in module.default && Array.isArray(module.default.controllers)) {
-    return module.default.controllers
+  if (module.default && Array.isArray((module.default as any).controllers)) {
+    return (module.default as any).controllers
   }
-  throw new Error('Expected the source module to export controllers or a serveClientSideServer(...) definition')
+
+  // Deep scan: find anything that looks like a controller class in any export
+  const discovered: ControllerClass[] = []
+  const seen = new Set()
+  
+  const scan = (val: any) => {
+    if (!val || seen.has(val)) return
+    seen.add(val)
+    if (typeof val === 'function' && /^(class|function)/.test(val.toString())) {
+      // Looks like a class or constructor function
+      discovered.push(val)
+    } else if (Array.isArray(val)) {
+      val.forEach(scan)
+    } else if (typeof val === 'object') {
+      Object.values(val).forEach(scan)
+    }
+  }
+
+  scan(module)
+  return discovered
 }
 
 function isClientSideServerDefinition(value: unknown): value is ClientSideServerDefinition {
   return Boolean(
     value
       && typeof value === 'object'
-      && typeof (value as ClientSideServerDefinition).serverName === 'string'
-      && Array.isArray((value as ClientSideServerDefinition).controllers),
+      && (typeof (value as any).serverName === 'string' || typeof (value as any).name === 'string')
+      && Array.isArray((value as any).controllers),
   )
 }
 
