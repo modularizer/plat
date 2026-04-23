@@ -42,6 +42,10 @@
     "./static": {
       "import": "./dist/static/index.js",
       "types": "./dist/static/index.d.ts"
+    },
+    "./runtime": {
+      "import": "./dist/client-side-server/runtime.js",
+      "types": "./dist/client-side-server/runtime.d.ts"
     }
   },
   "files": [

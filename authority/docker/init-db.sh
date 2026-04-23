@@ -17,6 +17,7 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-E
         google_sub TEXT UNIQUE NOT NULL,
         name TEXT,
         profile_image TEXT,
+        is_admin TEXT DEFAULT 'false',
         created_at TIMESTAMPTZ DEFAULT NOW(),
         updated_at TIMESTAMPTZ DEFAULT NOW()
     );

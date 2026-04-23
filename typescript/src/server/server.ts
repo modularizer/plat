@@ -670,14 +670,18 @@ export class PLATServer {
                     }
                     const config: CORSOptions = typeof result === 'object' ? result : { origin: '*' }
                     const requestOrigin = req.headers.origin as string
-                    let origin = '*'
-                    
+                    let origin: string | undefined = undefined
                     if (typeof config.origin === 'string') {
-                        origin = config.origin
+                        if (config.origin === '*' && config.credentials) {
+                            // Invalid: do not set header
+                            origin = undefined
+                        } else {
+                            origin = config.origin
+                        }
                     } else if (Array.isArray(config.origin)) {
                         if (requestOrigin && config.origin.includes(requestOrigin)) {
                             origin = requestOrigin
-                        } else {
+                        } else if (!config.credentials) {
                             origin = config.origin[0] ?? '*'
                         }
                     } else if (typeof config.origin === 'function') {
@@ -685,10 +689,10 @@ export class PLATServer {
                             origin = requestOrigin
                         }
                     }
-
-                    res.setHeader('Access-Control-Allow-Origin', origin)
-                    res.setHeader('Vary', 'Origin')
-                    
+                    if (origin) {
+                        res.setHeader('Access-Control-Allow-Origin', origin)
+                        res.setHeader('Vary', 'Origin')
+                    }
                     if (config.credentials) {
                         res.setHeader('Access-Control-Allow-Credentials', 'true')
                     }
@@ -732,21 +736,25 @@ export class PLATServer {
                         : corsConfig
             return (req: Request, res: Response, next: NextFunction) => {
                 const requestOrigin = req.headers.origin as string
-                let origin = '*'
-                
+                let origin: string | undefined = undefined
                 if (typeof config.origin === 'string') {
-                    origin = config.origin
+                    if (config.origin === '*' && config.credentials) {
+                        // Invalid: do not set header
+                        origin = undefined
+                    } else {
+                        origin = config.origin
+                    }
                 } else if (Array.isArray(config.origin)) {
                     if (requestOrigin && config.origin.includes(requestOrigin)) {
                         origin = requestOrigin
-                    } else {
+                    } else if (!config.credentials) {
                         origin = config.origin[0] ?? '*'
                     }
                 }
-
-                res.setHeader('Access-Control-Allow-Origin', origin)
-                res.setHeader('Vary', 'Origin')
-
+                if (origin) {
+                    res.setHeader('Access-Control-Allow-Origin', origin)
+                    res.setHeader('Vary', 'Origin')
+                }
                 if (config.credentials) {
                     res.setHeader('Access-Control-Allow-Credentials', 'true')
                 }

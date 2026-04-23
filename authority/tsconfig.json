@@ -21,7 +21,5 @@
   },
   "include": ["src"],
   "exclude": ["dist", "node_modules"],
-  "references": [
-    { "path": "../typescript" }
-  ]
+  // Removed project references to avoid TypeScript type confusion with node_modules
 }

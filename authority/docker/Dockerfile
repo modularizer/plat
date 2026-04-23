@@ -25,6 +25,9 @@ RUN cp -r /root/authority/dist ./dist && \
     mkdir -p node_modules/@modularizer && \
     cp -r /root/typescript node_modules/@modularizer/plat
 
+# Copy drizzle.config.ts for migrations
+COPY authority/drizzle.config.ts ./drizzle.config.ts
+
 # Expose port
 EXPOSE 3000
 
@@ -34,5 +37,3 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
 
 # Start
 CMD ["node", "dist/startup.js"]
-
-

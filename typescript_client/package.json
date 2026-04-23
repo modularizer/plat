@@ -22,20 +22,24 @@
   "types": "./dist/client-entry.d.ts",
   "exports": {
     ".": {
-      "import": "./dist/client-entry.js",
-      "types": "./dist/client-entry.d.ts"
+      "types": "./dist/client-entry.d.ts",
+      "import": "./dist/client-entry.js"
     },
     "./client-server": {
-      "import": "./dist/client-server-entry.js",
-      "types": "./dist/client-server-entry.d.ts"
+      "types": "./dist/client-server-entry.d.ts",
+      "import": "./dist/client-server-entry.js"
     },
     "./python-browser": {
-      "import": "./dist/python-browser-entry.js",
-      "types": "./dist/python-browser-entry.d.ts"
+      "types": "./dist/python-browser-entry.d.ts",
+      "import": "./dist/python-browser-entry.js"
     },
     "./static": {
-      "import": "./dist/static/index.js",
-      "types": "./dist/static/index.d.ts"
+      "types": "./dist/static/index.d.ts",
+      "import": "./dist/static/index.js"
+    },
+    "./runtime": {
+      "types": "./dist/client-side-server/runtime-fetch.d.ts",
+      "import": "./dist/client-side-server/runtime-fetch.js"
     }
   },
   "files": [

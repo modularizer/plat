@@ -23,6 +23,8 @@ services:
   redis:
     image: redis:7-alpine
     command: redis-server --save "" --appendonly no
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
     networks:
       - plat-internal
     healthcheck:
@@ -52,6 +54,7 @@ services:
       TRACEBACK_MAX_LINES: ${TRACEBACK_MAX_LINES:-0}
       STUDIO_ORIGIN: ${STUDIO_ORIGIN:-}
       SITEVIEWER_ORIGIN: ${SITEVIEWER_ORIGIN:-}
+      PLAYGROUND_SRC: ${PLAYGROUND_SRC:-}
     ports:
       - "${PORT:-3000}:${PORT:-3000}"
     depends_on:
@@ -66,10 +69,10 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    volumes:
-      - ./src:/app/src:ro
-      - ./dist:/app/dist
-      - ./data:/app/data
+    # volumes:
+    #   - ./src:/app/src:ro
+    #   - ./dist:/app/dist
+    #   - ./data:/app/data
 
   admin-dashboard:
     build:
@@ -77,6 +80,7 @@ services:
       dockerfile: authority/admin/Dockerfile
     environment:
       VITE_API_URL: ${VITE_API_URL:-http://localhost:${PORT:-3000}}
+      VITE_GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
     ports:
       - "${ADMIN_PORT:-3001}:3001"
     depends_on:
@@ -84,6 +88,12 @@ services:
         condition: service_healthy
     networks:
       - plat-internal
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:3001"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 40s
 
 volumes:
   plat-postgres-data:

@@ -938,17 +938,12 @@ class PresenceWebSocketController {
   }
 }
 
-// Bootstrap PLAT server with WebSocket support
-import { getDatabase } from './db/client.js'
-import { servers as serversTable } from './db/schema.js'
-import { eq } from 'drizzle-orm'
-
 const server = createServer(
   {
     port: PORT,
     host: HOST,
     cors: {
-      origin: ['http://localhost:5173', 'http://localhost:3000', 'http://localhost:3001'],
+      origin: ['http://localhost:5173', 'http://localhost:5174'],
       credentials: true,
       methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
       headers: [
@@ -964,7 +959,7 @@ const server = createServer(
       maxAge: 86400,
     },
     protocolPlugins: [createWebSocketProtocolPlugin([HostWebSocketController, PresenceWebSocketController])],
-    async onError(req, _res, err, statusCode) {
+    async onError(req: any, _res: any, err: any, statusCode: number) {
       console.error('[http:error]', {
         statusCode,
         method: req.method,
@@ -975,7 +970,7 @@ const server = createServer(
       })
     },
     auth: {
-      verify(mode, req, ctx) {
+      verify(mode: string, req: any, ctx: RouteContext) {
         if (mode === 'jwt' || mode === 'admin') {
           if (mode === 'admin') {
             const token = getAdminAuthToken(req)
@@ -1004,7 +999,7 @@ const server = createServer(
   AuthController,
   UserController,
   Admin,
-  ServerController,
+  ServerController
 )
 
 server.listen(PORT, () => {

@@ -57,10 +57,10 @@ function runMigrationsIfNeeded(): void {
   }
 
   const schemaPath = existsSync('./src/db/schema.ts') ? './src/db/schema.ts' : './dist/db/schema.js'
-  console.log(`⏳ Running database migrations (drizzle-kit push:pg) using ${schemaPath}...`)
+  console.log(`⏳ Running database migrations (drizzle-kit push) using ${schemaPath}...`)
   execFileSync(
     'npx',
-    ['drizzle-kit', 'push:pg', '--driver=pg', `--schema=${schemaPath}`, `--connectionString=${databaseUrl}`],
+    ['drizzle-kit', 'push', '--dialect=postgresql', `--schema=${schemaPath}`, `--url=${databaseUrl}`],
     { stdio: 'inherit' },
   )
   console.log('✅ Database migrations complete')
