@@ -1,5 +1,6 @@
 import express, {Express, NextFunction, Request, Response} from "express";
 import { createServer as createHttpServer, type Server as HttpServer } from 'node:http'
+import nodePath from 'node:path'
 import {applyRateLimitCheck, applyRateLimitRefund, createInMemoryRateLimit} from "./rate-limit";
 import {
     applyTokenLimitCheck,
@@ -1477,7 +1478,7 @@ export class PLATServer {
         // Register root static folder as lowest-priority fallback
         if (this.pendingRootFolder) {
             const rootFolder = this.pendingRootFolder
-            this.app.get('*', async (req: Request, res: Response, next: NextFunction) => {
+            this.app.get(/.*/, async (req: Request, res: Response, next: NextFunction) => {
                 const subPath = req.path.replace(/^\//, '')
                 try {
                     const fileResponse = await rootFolder.folder.resolve(subPath)
@@ -1538,7 +1539,7 @@ export class PLATServer {
                 }
             }
             this.app.get(prefix, handler)
-            this.app.get(`${prefix}/*`, handler)
+            this.app.get(new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/.*`), handler)
         }
     }
 
@@ -1550,9 +1551,11 @@ export class PLATServer {
         if (fileResponse.maxAge !== undefined) {
             res.setHeader('Cache-Control', `public, max-age=${fileResponse.maxAge}`)
         }
+        if (fileResponse.status && fileResponse.status !== 200) {
+            res.status(fileResponse.status)
+        }
         if (fileResponse.kind === 'path') {
-            const path = require('node:path')
-            res.sendFile(path.resolve(fileResponse.source as string))
+            res.sendFile(nodePath.resolve(fileResponse.source as string))
         } else {
             const content = fileResponse.source
             if (typeof content === 'string') {

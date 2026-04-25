@@ -1183,7 +1183,9 @@ export async function createClientSideServerMQTTWebRTCPeerSession(
   const peer = new webrtc.RTCPeerConnection({
     iceServers: options.iceServers ?? DEFAULT_CLIENT_SIDE_SERVER_ICE_SERVERS,
   })
-  const dataChannel = peer.createDataChannel(`plat-css:${connectionId}`)
+  const dataChannel = peer.createDataChannel(`plat-css:${connectionId}`, {
+    ordered: true,
+  })
 
   const ready = deferred<void>()
   const timeoutMs = options.connectionTimeoutMs ?? (typeof RTCPeerConnection !== 'undefined' ? 15_000 : 30_000)

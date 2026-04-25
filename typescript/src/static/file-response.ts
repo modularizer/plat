@@ -6,6 +6,7 @@ export interface FileResponseOpts {
   contentType?: string
   maxAge?: number
   headers?: Record<string, string>
+  status?: number
 }
 
 function hasNodeBuffer(value: unknown): boolean {
@@ -33,6 +34,7 @@ export class FileResponse {
   readonly contentType: string
   readonly maxAge?: number
   readonly headers: Record<string, string>
+  readonly status: number
 
   private constructor(
     readonly kind: 'path' | 'content',
@@ -44,6 +46,7 @@ export class FileResponse {
     this.contentType = opts?.contentType ?? getMimeType(filename)
     this.maxAge = opts?.maxAge
     this.headers = opts?.headers ?? {}
+    this.status = opts?.status ?? 200
   }
 
   /**

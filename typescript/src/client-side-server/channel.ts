@@ -18,6 +18,11 @@ interface BinaryFileMetaMessage {
 // Stay well below the common WebRTC SCTP maxMessageSize (~256 KB). Chrome's
 // default is 262144, Firefox 1073741823. 64 KB leaves headroom for both.
 const BINARY_CHUNK_SIZE = 64 * 1024
+const BINARY_CHUNK_FRAME_MAGIC = 0x50424631 // "PBF1"
+const BINARY_CHUNK_FRAME_VERSION = 1
+const BINARY_CHUNK_FRAME_HEADER_BYTES = 12
+const textEncoder = new TextEncoder()
+const textDecoder = new TextDecoder()
 
 function toUint8Array(value: unknown): Uint8Array | null {
   if (value instanceof Uint8Array) return value
@@ -31,8 +36,12 @@ function splitBinaryFileMessage(message: unknown): { meta: BinaryFileMetaMessage
   const m = message as any
   if (m.jsonrpc !== '2.0' || m.ok !== true || !m.result || typeof m.result !== 'object') return null
   if (m.result._type !== 'file') return null
-  const bytes = toUint8Array(m.result.content)
-  if (!bytes) return null
+  const rawBytes = toUint8Array(m.result.content)
+  if (!rawBytes) return null
+  // If rawBytes is a view into a larger buffer, copy to a new Uint8Array
+  const bytes = (rawBytes.byteOffset === 0 && rawBytes.byteLength === rawBytes.buffer.byteLength)
+    ? rawBytes
+    : new Uint8Array(rawBytes) // copies only the intended slice
   const meta: BinaryFileMetaMessage = {
     platcss: 'file-binary-meta',
     jsonrpc: '2.0',
@@ -48,41 +57,116 @@ function splitBinaryFileMessage(message: unknown): { meta: BinaryFileMetaMessage
   return { meta, bytes }
 }
 
-function chunkBytes(bytes: Uint8Array): Uint8Array[] {
-  if (bytes.byteLength <= BINARY_CHUNK_SIZE) return [bytes]
-  const chunks: Uint8Array[] = []
+function chunkBytes(bytes: Uint8Array): Array<{ offset: number; bytes: Uint8Array }> {
+  if (bytes.byteLength <= BINARY_CHUNK_SIZE) return [{ offset: 0, bytes }]
+  const chunks: Array<{ offset: number; bytes: Uint8Array }> = []
   for (let offset = 0; offset < bytes.byteLength; offset += BINARY_CHUNK_SIZE) {
     const end = Math.min(offset + BINARY_CHUNK_SIZE, bytes.byteLength)
-    chunks.push(bytes.subarray(offset, end))
+    chunks.push({ offset, bytes: bytes.subarray(offset, end) })
   }
   return chunks
+}
+
+function encodeBinaryChunkFrame(id: string, offset: number, bytes: Uint8Array): Uint8Array {
+  const idBytes = textEncoder.encode(id)
+  const framed = new Uint8Array(BINARY_CHUNK_FRAME_HEADER_BYTES + idBytes.byteLength + bytes.byteLength)
+  const view = new DataView(framed.buffer, framed.byteOffset, framed.byteLength)
+  view.setUint32(0, BINARY_CHUNK_FRAME_MAGIC)
+  view.setUint8(4, BINARY_CHUNK_FRAME_VERSION)
+  view.setUint8(5, 0)
+  view.setUint16(6, idBytes.byteLength)
+  view.setUint32(8, offset)
+  framed.set(idBytes, BINARY_CHUNK_FRAME_HEADER_BYTES)
+  framed.set(bytes, BINARY_CHUNK_FRAME_HEADER_BYTES + idBytes.byteLength)
+  return framed
+}
+
+function decodeBinaryChunkFrame(value: unknown): { id: string; offset: number; bytes: Uint8Array } | null {
+  const framed = toUint8Array(value)
+  if (!framed || framed.byteLength < BINARY_CHUNK_FRAME_HEADER_BYTES) return null
+  const view = new DataView(framed.buffer, framed.byteOffset, framed.byteLength)
+  if (view.getUint32(0) !== BINARY_CHUNK_FRAME_MAGIC) return null
+  if (view.getUint8(4) !== BINARY_CHUNK_FRAME_VERSION) return null
+  const idByteLength = view.getUint16(6)
+  const offset = view.getUint32(8)
+  const payloadStart = BINARY_CHUNK_FRAME_HEADER_BYTES + idByteLength
+  if (payloadStart > framed.byteLength) return null
+  const id = textDecoder.decode(framed.subarray(BINARY_CHUNK_FRAME_HEADER_BYTES, payloadStart))
+  return {
+    id,
+    offset,
+    bytes: framed.subarray(payloadStart),
+  }
 }
 
 interface BinaryAssembly {
   meta: BinaryFileMetaMessage
   received: Uint8Array
-  offset: number
+  receivedBytes: number
+  chunks: Map<number, number>
 }
 
 function createAssembler() {
-  let current: BinaryAssembly | null = null
-  const queue: BinaryFileMetaMessage[] = []
+  // Map of file id to BinaryAssembly
+  const assemblies = new Map<string, BinaryAssembly>()
 
   const start = (meta: BinaryFileMetaMessage) => {
-    if (current) { queue.push(meta); return }
-    current = { meta, received: new Uint8Array(meta.byteLength), offset: 0 }
+    if (assemblies.has(meta.id)) {
+      console.warn('[assembler] Duplicate start for file id', { id: meta.id })
+      return
+    }
+    console.log('[assembler] Starting new file', {
+      id: meta.id,
+      byteLength: meta.byteLength
+    })
+    assemblies.set(meta.id, {
+      meta,
+      received: new Uint8Array(meta.byteLength),
+      receivedBytes: 0,
+      chunks: new Map<number, number>(),
+    })
   }
 
-  const push = (bytes: Uint8Array): BinaryAssembly | null => {
-    if (!current) return null
-    current.received.set(bytes, current.offset)
-    current.offset += bytes.byteLength
-    if (current.offset < current.meta.byteLength) return null
-    const done = current
-    current = null
-    const next = queue.shift()
-    if (next) current = { meta: next, received: new Uint8Array(next.byteLength), offset: 0 }
-    return done
+  // Returns BinaryAssembly if complete, else null
+  const push = (id: string, offset: number, bytes: Uint8Array): BinaryAssembly | null => {
+    const assembly = assemblies.get(id)
+    if (!assembly) {
+      console.warn('[assembler] Received chunk for unknown file id', { id, offset, chunkSize: bytes.byteLength })
+      return null
+    }
+    if (offset + bytes.byteLength > assembly.received.length) {
+      console.error('BinaryAssembly overflow: chunk too large', {
+        id,
+        offset,
+        chunk: bytes.byteLength,
+        buffer: assembly.received.length
+      })
+      return null
+    }
+    const priorChunkLength = assembly.chunks.get(offset)
+    if (priorChunkLength !== undefined) {
+      console.warn('[assembler] Duplicate chunk ignored', { id, offset, chunkSize: bytes.byteLength, priorChunkLength })
+      return null
+    }
+    for (const [existingOffset, existingLength] of assembly.chunks) {
+      const overlaps = offset < existingOffset + existingLength && existingOffset < offset + bytes.byteLength
+      if (overlaps) {
+        console.error('[assembler] Overlapping chunk rejected', {
+          id,
+          offset,
+          chunk: bytes.byteLength,
+          existingOffset,
+          existingLength,
+        })
+        return null
+      }
+    }
+    assembly.received.set(bytes, offset)
+    assembly.chunks.set(offset, bytes.byteLength)
+    assembly.receivedBytes += bytes.byteLength
+    if (assembly.receivedBytes < assembly.meta.byteLength) return null
+    assemblies.delete(id)
+    return assembly
   }
 
   return { start, push }
@@ -121,8 +205,15 @@ export function createRTCDataChannelAdapter(channel: RTCDataChannel): ClientSide
   channel.binaryType = 'arraybuffer'
 
   const assembler = createAssembler()
+  const listeners = new Set<(message: ClientSideServerMessage) => void | Promise<void>>()
 
-  const emitAssembled = (done: BinaryAssembly, listener: (message: ClientSideServerMessage) => void | Promise<void>) => {
+  const emit = (message: ClientSideServerMessage) => {
+    for (const listener of listeners) {
+      void listener(message)
+    }
+  }
+
+  const emitAssembled = (done: BinaryAssembly) => {
     const reconstructed = {
       ...done.meta,
       result: {
@@ -130,8 +221,37 @@ export function createRTCDataChannelAdapter(channel: RTCDataChannel): ClientSide
         content: done.received,
       },
     }
-    void listener(reconstructed as ClientSideServerMessage)
+    emit(reconstructed as ClientSideServerMessage)
   }
+
+  const onMessage = (event: MessageEvent) => {
+    if (typeof event.data === 'string') {
+      const parsed = JSON.parse(event.data)
+      if (isBinaryFileMetaMessage(parsed)) {
+        assembler.start(parsed)
+        return
+      }
+      emit(parsed as ClientSideServerMessage)
+      return
+    }
+    if (event.data instanceof ArrayBuffer) {
+      const framed = decodeBinaryChunkFrame(event.data)
+      if (!framed) {
+        console.error('[assembler] Received malformed binary chunk frame')
+        return
+      }
+      const done = assembler.push(framed.id, framed.offset, framed.bytes)
+      if (done) {
+        emitAssembled(done)
+      }
+      return
+    }
+    if (event.data instanceof Blob) {
+      console.warn('[plat channel] unexpected Blob data; ordering fallback')
+      return
+    }
+  }
+  channel.addEventListener('message', onMessage)
 
   return {
     async send(message) {
@@ -142,41 +262,19 @@ export function createRTCDataChannelAdapter(channel: RTCDataChannel): ClientSide
           if (channel.bufferedAmount > BUFFERED_AMOUNT_HIGH_WATER) {
             await waitForDrain(channel)
           }
-          const standalone = new Uint8Array(chunk.byteLength)
-          standalone.set(chunk)
-          channel.send(standalone as Uint8Array<ArrayBuffer>)
+          const framed = encodeBinaryChunkFrame(binary.meta.id, chunk.offset, chunk.bytes)
+          channel.send(framed as Uint8Array<ArrayBuffer>)
         }
         return
       }
       channel.send(JSON.stringify(message))
     },
     subscribe(listener) {
-      const onMessage = (event: MessageEvent) => {
-        if (typeof event.data === 'string') {
-          const parsed = JSON.parse(event.data)
-          if (isBinaryFileMetaMessage(parsed)) {
-            assembler.start(parsed)
-            return
-          }
-          void listener(parsed as ClientSideServerMessage)
-          return
-        }
-        if (event.data instanceof ArrayBuffer) {
-          const done = assembler.push(new Uint8Array(event.data))
-          if (done) emitAssembled(done, listener)
-          return
-        }
-        if (event.data instanceof Blob) {
-          // Shouldn't happen — we set binaryType='arraybuffer' above — but keep
-          // a safe synchronous fallback that preserves order via a chain.
-          console.warn('[plat channel] unexpected Blob data; ordering fallback')
-          return
-        }
-      }
-      channel.addEventListener('message', onMessage)
-      return () => channel.removeEventListener('message', onMessage)
+      listeners.add(listener)
+      return () => listeners.delete(listener)
     },
     close() {
+      channel.removeEventListener('message', onMessage)
       channel.close()
     },
   }
@@ -192,6 +290,43 @@ export function createWeriftDataChannelAdapter(
   },
 ): ClientSideServerChannel {
   const assembler = createAssembler()
+  const listeners = new Set<(message: ClientSideServerMessage) => void | Promise<void>>()
+
+  const emit = (message: ClientSideServerMessage) => {
+    for (const listener of listeners) {
+      void listener(message)
+    }
+  }
+
+  const subscription = channel.onMessage.subscribe((data) => {
+    if (typeof data === 'string') {
+      const parsed = JSON.parse(data)
+      if (isBinaryFileMetaMessage(parsed)) {
+        assembler.start(parsed)
+        return
+      }
+      emit(parsed as ClientSideServerMessage)
+      return
+    }
+
+    const framed = decodeBinaryChunkFrame(data)
+    if (!framed) {
+      console.error('[assembler] Received malformed binary chunk frame')
+      return
+    }
+    const done = assembler.push(framed.id, framed.offset, framed.bytes)
+    if (done) {
+      const reconstructed = {
+        ...done.meta,
+        result: {
+          ...done.meta.result,
+          content: done.received,
+        },
+      }
+      emit(reconstructed as ClientSideServerMessage)
+      return
+    }
+  })
 
   return {
     send(message) {
@@ -199,45 +334,20 @@ export function createWeriftDataChannelAdapter(
       if (binary) {
         channel.send(JSON.stringify(binary.meta))
         for (const chunk of chunkBytes(binary.bytes)) {
-          const standalone = new Uint8Array(chunk.byteLength)
-          standalone.set(chunk)
-          channel.send(standalone)
+          channel.send(encodeBinaryChunkFrame(binary.meta.id, chunk.offset, chunk.bytes))
         }
         return
       }
       channel.send(JSON.stringify(message))
     },
     subscribe(listener) {
-      const subscription = channel.onMessage.subscribe((data) => {
-        if (typeof data === 'string') {
-          const parsed = JSON.parse(data)
-          if (isBinaryFileMetaMessage(parsed)) {
-            assembler.start(parsed)
-            return
-          }
-          void listener(parsed as ClientSideServerMessage)
-          return
-        }
-
-        const bytes = data instanceof Uint8Array ? data : new Uint8Array(data)
-        const done = assembler.push(bytes)
-        if (done) {
-          const reconstructed = {
-            ...done.meta,
-            result: {
-              ...done.meta.result,
-              content: done.received,
-            },
-          }
-          void listener(reconstructed as ClientSideServerMessage)
-          return
-        }
-      })
+      listeners.add(listener)
       return () => {
-        subscription.unSubscribe()
+        listeners.delete(listener)
       }
     },
     close() {
+      subscription.unSubscribe()
       channel.close()
     },
   }
