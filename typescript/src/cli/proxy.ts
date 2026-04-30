@@ -1,4 +1,5 @@
 import { createClientProxy } from '../client'
+import { PLAT_AUTHORITY_URL } from '../client-side-server/authority-default'
 import type {
     ClientCallOptions,
     Clientified,
@@ -58,8 +59,8 @@ export type Cliified<T> = Clientified<T> & {
     $controllerName: string
 }
 
-const DEFAULT_TOKEN_ENV_VARS = ['PLAT_TOKEN', 'API_TOKEN', 'AUTH_TOKEN'] as const
-const DEFAULT_BASE_URL_ENV_VARS = ['PLAT_BASE_URL', 'API_BASE_URL', 'BASE_URL'] as const
+const TOKEN_ENV_VAR = 'AUTH_TOKEN'
+const BASE_URL_ENV_VAR = 'BASE_URL'
 
 export function createCliProxy<T>(
     controller: ApiClass<T>,
@@ -155,7 +156,7 @@ async function buildAuthHeaders(
             throw new Error(
                 [
                     `Missing auth token for ${ctx.controllerName}.${ctx.methodName}`,
-                    `Set ${config.tokenEnvVar ?? DEFAULT_TOKEN_ENV_VARS[0]} or pass token/getToken to createCliProxy().`,
+                    `Set ${config.tokenEnvVar ?? TOKEN_ENV_VAR} or pass token/getToken to createCliProxy().`,
                 ].join('\n'),
             )
         }
@@ -188,28 +189,16 @@ async function resolveToken(
         return readEnv(config.tokenEnvVar)
     }
 
-    for (const key of DEFAULT_TOKEN_ENV_VARS) {
-        const value = readEnv(key)
-        if (value) return value
-    }
-
-    return undefined
+    return readEnv(TOKEN_ENV_VAR)
 }
 
 function resolveBaseUrl(config: CliProxyConfig): string {
     if (config.baseUrl) return config.baseUrl
 
-    if (config.baseUrlEnvVar) {
-        const value = readEnv(config.baseUrlEnvVar)
-        if (value) return value
-    }
+    const value = readEnv(config.baseUrlEnvVar ?? BASE_URL_ENV_VAR)
+    if (value) return value
 
-    for (const key of DEFAULT_BASE_URL_ENV_VARS) {
-        const value = readEnv(key)
-        if (value) return value
-    }
-
-    return 'http://localhost:3000'
+    return PLAT_AUTHORITY_URL || ''
 }
 
 function readEnv(name: string): string | undefined {

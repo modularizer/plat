@@ -39,7 +39,9 @@ export function createPlatFetch(options: PlatFetchOptions): typeof globalThis.fe
     }
 
     const method = init?.method?.toUpperCase() ?? 'GET'
-    const path = new URL(url, 'http://localhost').pathname
+    // Throwaway base only used so the URL parser accepts a relative input;
+    // the host portion is discarded — only `.pathname` is read.
+    const path = new URL(url, 'http://_/').pathname
     const id = `plat-fetch-${++requestCounter}`
 
     // Parse body as input params

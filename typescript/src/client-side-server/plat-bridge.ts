@@ -835,7 +835,9 @@ function normalizePathWithBase(url: string, basePath: string): string {
   if (url.startsWith('/')) return url
   const baseDir = basePath.replace(/\/[^/]*$/, '/')
   try {
-    const parsed = new URL(url, `http://localhost${baseDir}`)
+    // Throwaway origin only used so the URL parser accepts a relative input;
+    // the host portion is discarded — only `.pathname` and `.search` are read.
+    const parsed = new URL(url, `http://_${baseDir}`)
     return `${parsed.pathname}${parsed.search}`
   } catch {
     return normalizePath(url)

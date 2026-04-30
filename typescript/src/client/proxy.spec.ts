@@ -4,7 +4,9 @@
  */
 
 import { createClientProxy } from './proxy'
-import type { ClientProxyConfig, EndpointDef } from '../types'
+import type { EndpointDef } from '../types'
+
+const BASE_URL = 'http://localhost:3000'
 
 describe('Client Proxy', () => {
   // Mock controller class for testing
@@ -40,8 +42,8 @@ describe('Client Proxy', () => {
 
   describe('createClientProxy', () => {
     it('should create a proxy object', () => {
-      const config: ClientProxyConfig = {
-        baseUrl: 'http://localhost:3000',
+      const config = {
+        baseUrl: BASE_URL,
         fetch: async () => new Response('{}'),
       }
 
@@ -52,8 +54,8 @@ describe('Client Proxy', () => {
     })
 
     it('should throw error if no fetch implementation available', () => {
-      const config: ClientProxyConfig = {
-        baseUrl: 'http://localhost:3000',
+      const config = {
+        baseUrl: BASE_URL,
         fetch: undefined,
       }
 
@@ -71,8 +73,8 @@ describe('Client Proxy', () => {
     })
 
     it('should detect duplicate endpoint definitions', () => {
-      const config: ClientProxyConfig = {
-        baseUrl: 'http://localhost:3000',
+      const config = {
+        baseUrl: BASE_URL,
         fetch: async () => new Response('{}'),
       }
 
@@ -99,8 +101,8 @@ describe('Client Proxy', () => {
     })
 
     it('should support custom headers configuration', () => {
-      const config: ClientProxyConfig = {
-        baseUrl: 'http://localhost:3000',
+      const config = {
+        baseUrl: BASE_URL,
         fetch: async () => new Response('{}'),
         headers: { 'X-Custom-Header': 'test-value' },
       }
@@ -110,8 +112,8 @@ describe('Client Proxy', () => {
     })
 
     it('should support dynamic headers as function', () => {
-      const config: ClientProxyConfig = {
-        baseUrl: 'http://localhost:3000',
+      const config = {
+        baseUrl: BASE_URL,
         fetch: async () => new Response('{}'),
         headers: async () => ({ 'Authorization': 'Bearer token' }),
       }
@@ -121,8 +123,8 @@ describe('Client Proxy', () => {
     })
 
     it('should support timeout configuration', () => {
-      const config: ClientProxyConfig = {
-        baseUrl: 'http://localhost:3000',
+      const config = {
+        baseUrl: BASE_URL,
         fetch: async () => new Response('{}'),
         timeoutMs: 5000,
       }
@@ -132,8 +134,8 @@ describe('Client Proxy', () => {
     })
 
     it('should support retry configuration', () => {
-      const config: ClientProxyConfig = {
-        baseUrl: 'http://localhost:3000',
+      const config = {
+        baseUrl: BASE_URL,
         fetch: async () => new Response('{}'),
         retry: {
           maxAttempts: 3,
@@ -146,8 +148,8 @@ describe('Client Proxy', () => {
     })
 
     it('should support error callbacks', () => {
-      const config: ClientProxyConfig = {
-        baseUrl: 'http://localhost:3000',
+      const config = {
+        baseUrl: BASE_URL,
         fetch: async () => new Response('{}'),
         onUnauthorized: jest.fn(),
         onForbidden: jest.fn(),
@@ -176,8 +178,8 @@ describe('Client Proxy', () => {
         },
       ] as any[]
 
-      const config: ClientProxyConfig = {
-        baseUrl: 'http://localhost:3000',
+      const config = {
+        baseUrl: BASE_URL,
         fetch: async () => new Response('{}'),
       }
 
@@ -190,8 +192,8 @@ describe('Client Proxy', () => {
 
   describe('Proxy Methods', () => {
     it('should expose controller methods', () => {
-      const config: ClientProxyConfig = {
-        baseUrl: 'http://localhost:3000',
+      const config = {
+        baseUrl: BASE_URL,
         fetch: async () => new Response('{}'),
       }
 
@@ -203,8 +205,8 @@ describe('Client Proxy', () => {
     })
 
     it('should ignore non-function properties', () => {
-      const config: ClientProxyConfig = {
-        baseUrl: 'http://localhost:3000',
+      const config = {
+        baseUrl: BASE_URL,
         fetch: async () => new Response('{}'),
       }
 
@@ -218,8 +220,8 @@ describe('Client Proxy', () => {
 
   describe('Configuration', () => {
     it('should accept baseUrl with trailing slash', () => {
-      const config: ClientProxyConfig = {
-        baseUrl: 'http://localhost:3000/',
+      const config = {
+        baseUrl: `${BASE_URL}/`,
         fetch: async () => new Response('{}'),
       }
 
@@ -228,8 +230,8 @@ describe('Client Proxy', () => {
     })
 
     it('should accept baseUrl without trailing slash', () => {
-      const config: ClientProxyConfig = {
-        baseUrl: 'http://localhost:3000',
+      const config = {
+        baseUrl: BASE_URL,
         fetch: async () => new Response('{}'),
       }
 
@@ -243,8 +245,8 @@ describe('Client Proxy', () => {
         fetchCalled = true
         return new Response('{}')
       }
-      const config: ClientProxyConfig = {
-        baseUrl: 'http://localhost:3000',
+      const config = {
+        baseUrl: BASE_URL,
         fetch: customFetch,
       }
 
@@ -253,8 +255,8 @@ describe('Client Proxy', () => {
     })
 
     it('should disable retry when set to false', () => {
-      const config: ClientProxyConfig = {
-        baseUrl: 'http://localhost:3000',
+      const config = {
+        baseUrl: BASE_URL,
         fetch: async () => new Response('{}'),
         retry: false,
       }
@@ -264,8 +266,8 @@ describe('Client Proxy', () => {
     })
 
     it('should support custom retry delay function', () => {
-      const config: ClientProxyConfig = {
-        baseUrl: 'http://localhost:3000',
+      const config = {
+        baseUrl: BASE_URL,
         fetch: async () => new Response('{}'),
         retry: {
           maxAttempts: 3,
@@ -278,8 +280,8 @@ describe('Client Proxy', () => {
     })
 
     it('should support custom shouldRetry predicate', () => {
-      const config: ClientProxyConfig = {
-        baseUrl: 'http://localhost:3000',
+      const config = {
+        baseUrl: BASE_URL,
         fetch: async () => new Response('{}'),
         retry: {
           maxAttempts: 3,

@@ -7,6 +7,7 @@
 
 import { OpenAPIClient, type OpenAPIClientConfig } from '../client/openapi-client'
 import { createClientSideServerMQTTWebRTCTransportPlugin } from '../client-side-server/mqtt-webrtc'
+import { PLAT_AUTHORITY_URL } from '../client-side-server/authority-default'
 
 // ── types ──────────────────────────────────────────────────
 
@@ -244,9 +245,6 @@ export async function runCli(spec: any, argvOrOptions?: string[] | RunCliOptions
       const summary = cmd.summary ? `  \u2014 ${cmd.summary}` : ''
       console.log(`  ${cmd.name.padEnd(30)} ${params}${summary}`)
     }
-    console.log('\nEnvironment Variables:')
-    console.log('  API_URL        Base URL (default: from spec or http://localhost:3000)')
-    console.log('  API_TOKEN      Bearer auth token')
     process.exit(0)
   }
 
@@ -257,10 +255,8 @@ export async function runCli(spec: any, argvOrOptions?: string[] | RunCliOptions
   }
 
   const baseUrl = options?.baseUrl
-    ?? process.env.API_URL
-    ?? process.env.API_BASE_URL
     ?? spec.servers?.[0]?.url
-    ?? 'http://localhost:3000'
+    ?? PLAT_AUTHORITY_URL
 
   const token = process.env.API_TOKEN
   const clientConfig: Partial<OpenAPIClientConfig> = {

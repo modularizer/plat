@@ -226,6 +226,7 @@ export class PLATServer {
 
         // General help endpoint
         this.app.get('/help', (req: Request, res: Response) => {
+            const origin = `${req.protocol}://${req.headers.host ?? ''}`
             const help = {
                 endpoints: {
                     'GET /endpoints': 'List all available API endpoints with descriptions',
@@ -264,12 +265,12 @@ export class PLATServer {
                     },
                 },
                 examples: [
-                    'curl http://localhost:3000/endpoints',
-                    'curl "http://localhost:3000/endpoints?method=POST"',
-                    'curl "http://localhost:3000/endpoints?search=user"',
-                    'curl "http://localhost:3000/endpoints?format=json"',
-                    'curl "http://localhost:3000/openapi-jq?filter=.paths"',
-                    'curl "http://localhost:3000/api/users?help=true"',
+                    `curl ${origin}/endpoints`,
+                    `curl "${origin}/endpoints?method=POST"`,
+                    `curl "${origin}/endpoints?search=user"`,
+                    `curl "${origin}/endpoints?format=json"`,
+                    `curl "${origin}/openapi-jq?filter=.paths"`,
+                    `curl "${origin}/api/users?help=true"`,
                 ],
             }
 

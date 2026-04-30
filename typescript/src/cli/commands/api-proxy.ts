@@ -7,6 +7,7 @@ import fs from 'fs'
 import path from 'path'
 import { OpenAPIClient } from '../../client/openapi-client'
 import { createClientSideServerMQTTWebRTCTransportPlugin } from '../../client-side-server/mqtt-webrtc'
+import { PLAT_AUTHORITY_URL } from '../../client-side-server/authority-default'
 
 interface OpenAPISpec {
   openapi: string
@@ -230,20 +231,15 @@ export async function apiProxy(cwd: string, argv: string[]): Promise<void> {
     const parsed = parseCliArgs(argv.slice(argsStartIndex))
 
     // Resolve base URL
-    const baseUrl =
-      process.env.PLAT_BASE_URL ||
-      process.env.API_BASE_URL ||
-      process.env.BASE_URL ||
-      'http://localhost:3000'
+    const baseUrl = parsed.params.baseUrl ?? PLAT_AUTHORITY_URL;
+      delete parsed.params.baseUrl
 
     // Add timeout if specified
     const timeoutMs = parsed.options.timeoutMs || parsed.options.timeout
 
     // Add Authorization header if token is available
-    const token =
-      process.env.PLAT_TOKEN ||
-      process.env.API_TOKEN ||
-      process.env.AUTH_TOKEN
+    const token = parsed.params.authToken ?? process.env.PLAT_TOKEN;
+      delete parsed.params.authToken
     const client = new OpenAPIClient(spec as any, {
       baseUrl,
       timeoutMs,

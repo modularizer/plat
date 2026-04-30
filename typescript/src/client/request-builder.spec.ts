@@ -25,6 +25,8 @@ function makeEndpoint(overrides: Partial<EndpointDef> & Pick<EndpointDef, 'metho
   }
 }
 
+const BASE_URL = 'http://localhost:3000'
+
 describe('Request Builder', () => {
   describe('getPathParamNames', () => {
     it('should return empty array for flat plat routes', () => {
@@ -46,15 +48,15 @@ describe('Request Builder', () => {
     })
 
     it('should build GET with all input as query params', () => {
-      const request = buildRequest(endpoint, { id: '123' }, 'http://localhost:3000')
+      const request = buildRequest(endpoint, { id: '123' }, BASE_URL)
 
-      expect(request.url).toBe('http://localhost:3000/getOrder?id=123')
+      expect(request.url).toBe(`${BASE_URL}/getOrder?id=123`)
       expect((request.headers as Record<string, string>).accept).toBe('application/json')
       expect(request.body).toBeUndefined()
     })
 
     it('should handle multiple query parameters', () => {
-      const request = buildRequest(endpoint, { id: '123', limit: '10', offset: '20' }, 'http://localhost:3000')
+      const request = buildRequest(endpoint, { id: '123', limit: '10', offset: '20' }, BASE_URL)
 
       expect(request.url).toContain('/getOrder?')
       expect(request.url).toContain('id=123')
@@ -63,14 +65,14 @@ describe('Request Builder', () => {
     })
 
     it('should skip undefined values in query parameters', () => {
-      const request = buildRequest(endpoint, { id: '123', filter: undefined }, 'http://localhost:3000')
+      const request = buildRequest(endpoint, { id: '123', filter: undefined }, BASE_URL)
 
       expect(request.url).toContain('id=123')
       expect(request.url).not.toContain('filter')
     })
 
     it('should encode special characters in query values', () => {
-      const request = buildRequest(endpoint, { q: 'hello world' }, 'http://localhost:3000')
+      const request = buildRequest(endpoint, { q: 'hello world' }, BASE_URL)
 
       expect(request.url).toContain('hello+world')
     })
@@ -85,15 +87,15 @@ describe('Request Builder', () => {
 
     it('should build POST with all input as JSON body', () => {
       const input = { userId: 'user1', items: [{ productId: '1', quantity: 2 }] }
-      const request = buildRequest(endpoint, input, 'http://localhost:3000')
+      const request = buildRequest(endpoint, input, BASE_URL)
 
-      expect(request.url).toBe('http://localhost:3000/createOrder')
+      expect(request.url).toBe(`${BASE_URL}/createOrder`)
       expect(request.body).toBe(JSON.stringify(input))
       expect((request.headers as Record<string, string>)['content-type']).toBe('application/json')
     })
 
     it('should set correct headers for POST', () => {
-      const request = buildRequest(endpoint, { name: 'Widget' }, 'http://localhost:3000')
+      const request = buildRequest(endpoint, { name: 'Widget' }, BASE_URL)
       const headers = request.headers as Record<string, string>
 
       expect(headers.accept).toBe('application/json')
@@ -105,7 +107,7 @@ describe('Request Builder', () => {
         user: { name: 'Alice', role: 'admin' },
         tags: ['urgent', 'new'],
       }
-      const request = buildRequest(endpoint, input, 'http://localhost:3000')
+      const request = buildRequest(endpoint, input, BASE_URL)
 
       const parsed = JSON.parse(request.body!)
       expect(parsed.user.name).toBe('Alice')
@@ -114,7 +116,7 @@ describe('Request Builder', () => {
 
     it('should strip undefined values from body', () => {
       const input = { name: 'Widget', description: undefined }
-      const request = buildRequest(endpoint, input, 'http://localhost:3000')
+      const request = buildRequest(endpoint, input, BASE_URL)
 
       const parsed = JSON.parse(request.body!)
       expect(parsed).toEqual({ name: 'Widget' })
@@ -131,9 +133,9 @@ describe('Request Builder', () => {
 
     it('should build PUT with JSON body', () => {
       const input = { id: '123', status: 'shipped' }
-      const request = buildRequest(endpoint, input, 'http://localhost:3000')
+      const request = buildRequest(endpoint, input, BASE_URL)
 
-      expect(request.url).toBe('http://localhost:3000/updateOrder')
+      expect(request.url).toBe(`${BASE_URL}/updateOrder`)
       expect(JSON.parse(request.body!)).toEqual(input)
     })
   })
@@ -146,9 +148,9 @@ describe('Request Builder', () => {
     })
 
     it('should build DELETE with query params', () => {
-      const request = buildRequest(endpoint, { id: '123' }, 'http://localhost:3000')
+      const request = buildRequest(endpoint, { id: '123' }, BASE_URL)
 
-      expect(request.url).toBe('http://localhost:3000/deleteOrder?id=123')
+      expect(request.url).toBe(`${BASE_URL}/deleteOrder?id=123`)
       expect((request.headers as Record<string, string>).accept).toBe('application/json')
       expect(request.body).toBeUndefined()
     })
@@ -162,18 +164,18 @@ describe('Request Builder', () => {
     })
 
     it('should handle base URL with trailing slash', () => {
-      const request = buildRequest(endpoint, {}, 'http://localhost:3000/')
-      expect(request.url).toBe('http://localhost:3000/listOrders')
+      const request = buildRequest(endpoint, {}, `${BASE_URL}/`)
+      expect(request.url).toBe(`${BASE_URL}/listOrders`)
     })
 
     it('should handle base URL without trailing slash', () => {
-      const request = buildRequest(endpoint, {}, 'http://localhost:3000')
-      expect(request.url).toBe('http://localhost:3000/listOrders')
+      const request = buildRequest(endpoint, {}, BASE_URL)
+      expect(request.url).toBe(`${BASE_URL}/listOrders`)
     })
 
     it('should handle https', () => {
-      const request = buildRequest(endpoint, {}, 'https://api.example.com')
-      expect(request.url).toContain('https://api.example.com/listOrders')
+      const request = buildRequest(endpoint, {}, BASE_URL)
+      expect(request.url).toContain(`${BASE_URL}/listOrders`)
     })
   })
 
@@ -186,7 +188,7 @@ describe('Request Builder', () => {
       })
 
       const input = { name: 'Alice', nickname: null, email: 'alice@example.com' }
-      const request = buildRequest(endpoint, input, 'http://localhost:3000')
+      const request = buildRequest(endpoint, input, BASE_URL)
 
       const parsed = JSON.parse(request.body!)
       expect(parsed.name).toBe('Alice')
@@ -201,8 +203,8 @@ describe('Request Builder', () => {
         httpMethod: 'GET',
       })
 
-      const request = buildRequest(endpoint, {}, 'http://localhost:3000')
-      expect(request.url).toBe('http://localhost:3000/listOrders')
+      const request = buildRequest(endpoint, {}, BASE_URL)
+      expect(request.url).toBe(`${BASE_URL}/listOrders`)
     })
   })
 })

@@ -25,11 +25,6 @@ export async function jwtGenerate(cwd: string, args: string[]): Promise<void> {
     console.log('Token:')
     console.log(token)
     console.log('')
-    console.log('Usage in curl request:')
-    const baseUrl = process.env.API_BASE_URL || process.env.BASE_URL || 'http://localhost:3000'
-    console.log(
-      `  curl -H "Authorization: ${getAuthHeader(token)}" ${baseUrl}/api/orders`
-    )
   } catch (error: any) {
     console.error('❌ Error:', error.message)
     process.exit(1)
