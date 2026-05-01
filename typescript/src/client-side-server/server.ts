@@ -351,10 +351,32 @@ export class PLATClientSideServer {
     if (message.method.toUpperCase() === 'GET') {
       const staticResult = await this.resolveStaticFolder(message.path)
       if (staticResult !== undefined) {
+        const ctx: RouteContext = {
+          method: message.method,
+          url: message.path,
+          headers: message.headers ?? {},
+        }
+        ctx.call = {
+          id: message.id,
+          mode: 'rpc',
+          emit: async () => {},
+          progress: async () => {},
+          log: async () => {},
+          chunk: async () => {},
+          cancelled: () => false,
+        }
+        ctx.rpc = ctx.call
+        await this.options.onRequest?.(message, ctx)
+
         if (staticResult === null) {
-          await channel.send({ jsonrpc: '2.0', id: message.id, ok: false, error: { status: 404, message: 'Not found' } })
+          const resultPayload = { jsonrpc: '2.0', id: message.id, ok: false, error: { status: 404, message: 'Not found' } }
+          await channel.send(resultPayload)
+          await this.options.onError?.(message, ctx, new HttpError(404, 'Not found'))
         } else {
-          await channel.send({ jsonrpc: '2.0', id: message.id, ok: true, result: await this.serializeFileResponse(staticResult, message.headers) })
+          const serialized = await this.serializeFileResponse(staticResult, message.headers)
+          const resultPayload = { jsonrpc: '2.0', id: message.id, ok: true, result: serialized }
+          await channel.send(resultPayload)
+          await this.options.onResponse?.(message, ctx, serialized)
         }
         return
       }

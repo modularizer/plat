@@ -211,6 +211,7 @@ export interface ClientSideServerMQTTWebRTCOptions {
       context: { serverName: string; connectionId: string; senderId: string },
     ) => Promise<boolean> | boolean
   }
+  onClientChange?: (clientCount: number, activeClients: string[]) => void
 }
 
 export interface ClientSideServerMQTTWebRTCServerOptions extends ClientSideServerMQTTWebRTCOptions {
@@ -629,12 +630,14 @@ export class ClientSideServerMQTTWebRTCServer {
       const serveUnsubscribe = this.options.server.serveChannel(channel)
       this.channels.set(connId, channel)
       this.clientCount++
+      this.options.onClientChange?.(this.clientCount, Array.from(this.channels.keys()))
 
       const cleanup = () => {
         controlUnsubscribe()
         serveUnsubscribe()
         this.channels.delete(connId)
         this.clientCount--
+        this.options.onClientChange?.(this.clientCount, Array.from(this.channels.keys()))
         this.unsubscribeByConnection.delete(connId)
       }
 
@@ -732,12 +735,14 @@ export class ClientSideServerMQTTWebRTCServer {
       const serveUnsubscribe = this.options.server.serveChannel(channel)
       this.channels.set(connId, channel)
       this.clientCount++
+      this.options.onClientChange?.(this.clientCount, Array.from(this.channels.keys()))
 
       const cleanup = () => {
         controlUnsubscribe()
         serveUnsubscribe()
         this.channels.delete(connId)
         this.clientCount--
+        this.options.onClientChange?.(this.clientCount, Array.from(this.channels.keys()))
         this.unsubscribeByConnection.delete(connId)
       }
 
