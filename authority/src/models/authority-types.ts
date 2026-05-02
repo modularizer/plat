@@ -66,7 +66,13 @@ export interface AuthorityServerRegistration {
   endpoint_type?: string // 'http', 'ws', 'webrtc', etc.
   address?: string // URL or host:port
   allowed_origins?: string[]
-  metadata?: Record<string, any>
+  metadata?: {
+    signingPublicKeyJwk?: unknown
+    encryptionPublicKeyJwk?: unknown
+    signingKeyId?: string
+    encryptionKeyId?: string
+    [key: string]: any
+  }
 }
 
 export type AuthorityRegistrationRejectionCode =

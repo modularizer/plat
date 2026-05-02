@@ -30,6 +30,13 @@ import {
   createJwtAuth,
   signToken,
 } from '@modularizer/plat'
+import {
+  getOrCreateClientSideServerIdentityKeyPair,
+  createSignedClientSideServerAuthorityRecordV2,
+  createSignedClientSideServerAuthorityRecord,
+} from '@modularizer/plat/client'
+import fs from 'fs'
+import path from 'path'
 import 'dotenv/config'
 import {
   parseAuthorityConnectRequest,
@@ -128,6 +135,20 @@ const googleIdTokenService = GOOGLE_CLIENT_ID
         : {}),
     })
   : null
+
+const keyPairFile = process.env.AUTHORITY_IDENTITY_KEYPAIR_FILE || path.join(process.cwd(), '.authority-identity.json')
+export const authorityKeyPair = await getOrCreateClientSideServerIdentityKeyPair({
+  storage: {
+    getItem: () => {
+      try {
+        return fs.readFileSync(keyPairFile, 'utf8')
+      } catch {
+        return null
+      }
+    },
+    setItem: (_, v) => fs.writeFileSync(keyPairFile, v, 'utf8'),
+  },
+})
 
 // In-memory state (v1 — replace with Redis/Postgres later)
 const liveSessions = new Map<string, AuthorityHostSession>()
@@ -598,6 +619,54 @@ class ConnectController {
   }
 }
 
+@Controller('/resolveAuthorityHost')
+class AuthorityTrustController {
+  @GET()
+  async resolveAuthorityHost(
+    input: { serverName?: string },
+    ctx: RouteContext,
+  ) {
+    if (!input.serverName) {
+      throw new HttpError(400, 'missing_server_name')
+    }
+
+    const resolved = resolveLongestPrefixHost(input.serverName)
+    if (!resolved) {
+      throw new HttpError(404, 'server_offline', { message: `No online host for "${input.serverName}"` })
+    }
+    const matchedServerName = resolved.matched
+    const hostSession = liveSessions.get(resolved.hostSessionId)
+    if (!hostSession) {
+      throw new HttpError(404, 'server_offline')
+    }
+
+    const metadata = hostSession.getMetadata(matchedServerName) || {}
+
+    // Support both V2 (signing + encryption keys) and V1 (single key) based on what the host registered.
+    if (metadata.signingPublicKeyJwk && metadata.encryptionPublicKeyJwk) {
+      return await createSignedClientSideServerAuthorityRecordV2(authorityKeyPair, {
+        serverName: input.serverName,
+        signingPublicKeyJwk: metadata.signingPublicKeyJwk,
+        encryptionPublicKeyJwk: metadata.encryptionPublicKeyJwk,
+        signingKeyId: metadata.signingKeyId,
+        encryptionKeyId: metadata.encryptionKeyId,
+        authorityName: 'plat-authority',
+      })
+    } else if (metadata.publicKeyJwk) {
+      // Fallback for V1
+      return await createSignedClientSideServerAuthorityRecord(authorityKeyPair, {
+        serverName: input.serverName,
+        publicKeyJwk: metadata.publicKeyJwk,
+        keyId: metadata.keyId,
+        authorityName: 'plat-authority',
+      })
+    }
+
+    // If the host didn't register public keys, we can't create an authority record.
+    throw new HttpError(404, 'missing_host_identity', { message: `Host "${matchedServerName}" did not provide an identity.` })
+  }
+}
+
 // WebSocket Controllers (using PLAT decorators!)
 @WebSocketController('/ws/host')
 class HostWebSocketController {
@@ -998,7 +1067,8 @@ const server = createServer(
   AuthController,
   UserController,
   Admin,
-  ServerController
+  ServerController,
+  AuthorityTrustController
 )
 
 server.listen(PORT, () => {

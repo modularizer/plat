@@ -15,6 +15,7 @@ export class AuthorityHostSession {
   private readonly connectedAt: number
   private lastPongAt?: number
   private readonly authModes = new Map<string, AuthorityAuthMode>()
+  private readonly metadata = new Map<string, Record<string, any> | undefined>()
 
   readonly hostSessionId: string
   readonly googleSub: string
@@ -29,12 +30,14 @@ export class AuthorityHostSession {
   registerServers(servers: Iterable<AuthorityServerRegistration>): void {
     for (const server of servers) {
       this.authModes.set(server.server_name, server.auth_mode)
+      this.metadata.set(server.server_name, server.metadata)
     }
   }
 
   unregisterServers(serverNames: Iterable<string>): void {
     for (const serverName of serverNames) {
       this.authModes.delete(serverName)
+      this.metadata.delete(serverName)
     }
   }
 
@@ -46,12 +49,17 @@ export class AuthorityHostSession {
     return this.authModes.get(serverName)
   }
 
+  getMetadata(serverName: string): Record<string, any> | undefined {
+    return this.metadata.get(serverName)
+  }
+
   markPong(at = Date.now()): void {
     this.lastPongAt = at
   }
 
   clearRegistrations(): void {
     this.authModes.clear()
+    this.metadata.clear()
   }
 
   snapshot(): AuthorityLiveHostSession {

@@ -5,6 +5,7 @@ import { createRTCDataChannelAdapter, type ClientSideServerChannel } from './cha
 import {
   buildClientSideServerIdentityChallenge,
   clientSideServerPublicKeysEqual,
+  parseClientSideServerPinnedIdentity,
   type ClientSideServerAnyAuthorityRecord,
   type ClientSideServerAnyTrustedServerRecord,
   type ClientSideServerAuthorityServer,
@@ -234,6 +235,7 @@ export interface ClientSideServerIdentityOptions {
   knownHostsStorage?: ClientSideServerStorageLike
   knownHostsStorageKey?: string
   trustOnFirstUse?: boolean
+  pinnedIdentity?: string | Record<string, unknown> | ClientSideServerAnyTrustedServerRecord
   authority?: {
     publicKeyJwk: JsonWebKey
     authorityName?: string
@@ -1444,6 +1446,16 @@ async function resolveExpectedServerIdentity(
   serverName: string,
   options?: ClientSideServerIdentityOptions,
 ): Promise<ClientSideServerResolvedExpectedIdentity | null> {
+  if (options?.pinnedIdentity) {
+    const pinned = await parseClientSideServerPinnedIdentity(serverName, options.pinnedIdentity)
+    if (pinned) {
+      if (options.knownHosts) {
+        saveTrustedClientSideServerRecordToMap(options.knownHosts, pinned)
+      }
+      return normalizeExpectedIdentity(pinned)
+    }
+  }
+
   const mapped = loadTrustedClientSideServerRecordFromMap(options?.knownHosts, serverName)
   if (mapped) return normalizeExpectedIdentity(mapped)
 

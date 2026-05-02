@@ -369,13 +369,13 @@ export class PLATClientSideServer {
         await this.options.onRequest?.(message, ctx)
 
         if (staticResult === null) {
-          const resultPayload = { jsonrpc: '2.0', id: message.id, ok: false, error: { status: 404, message: 'Not found' } }
-          await channel.send(resultPayload)
-          await this.options.onError?.(message, ctx, new HttpError(404, 'Not found'))
-        } else {
-          const serialized = await this.serializeFileResponse(staticResult, message.headers)
-          const resultPayload = { jsonrpc: '2.0', id: message.id, ok: true, result: serialized }
-          await channel.send(resultPayload)
+           const resultPayload = { jsonrpc: '2.0', id: message.id, ok: false, error: { status: 404, message: 'Not found' } } as const
+           await channel.send(resultPayload)
+           await this.options.onError?.(message, ctx, new HttpError(404, 'Not found'))
+         } else {
+           const serialized = await this.serializeFileResponse(staticResult, message.headers)
+           const resultPayload = { jsonrpc: '2.0', id: message.id, ok: true, result: serialized } as const
+           await channel.send(resultPayload)
           await this.options.onResponse?.(message, ctx, serialized)
         }
         return

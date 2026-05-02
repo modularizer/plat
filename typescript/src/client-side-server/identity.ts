@@ -914,3 +914,145 @@ function base64ToBytes(base64: string): Uint8Array {
 function toBufferSource(bytes: Uint8Array): ArrayBuffer {
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
 }
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
+}
+
+function looksLikeJsonWebKey(value: Record<string, unknown>): boolean {
+  return typeof value.kty === 'string'
+}
+
+function assertPinnedIdentityServerName(serverName: string, candidate: unknown): void {
+  if (typeof candidate === 'string' && candidate && candidate !== serverName) {
+    throw new Error(`Pinned identity serverName mismatch: expected ${serverName}, got ${candidate}`)
+  }
+}
+
+export async function parseClientSideServerPinnedIdentity(
+  serverName: string,
+  identity: string | Record<string, unknown> | ClientSideServerAnyTrustedServerRecord | undefined,
+): Promise<ClientSideServerAnyTrustedServerRecord | undefined> {
+  if (!identity) return undefined
+
+  let parsed: unknown = identity
+  if (typeof identity === 'string') {
+    const trimmed = identity.trim()
+    if (!trimmed) return undefined
+    try {
+      parsed = JSON.parse(trimmed)
+    } catch {
+      throw new Error(
+        'Pinned identity string must be JSON-encoded key material. '
+        + 'Fingerprint-only pin strings are not supported yet.',
+      )
+    }
+  }
+
+  if (!isRecord(parsed)) {
+    throw new Error('Pinned identity must be or decode to a JSON object')
+  }
+
+  const trustedAt = Date.now()
+
+  if (
+    parsed.protocol === 'plat-css-authority-v2'
+    && isRecord(parsed.signingPublicKeyJwk)
+    && isRecord(parsed.encryptionPublicKeyJwk)
+  ) {
+    assertPinnedIdentityServerName(serverName, parsed.serverName)
+    return {
+      serverName,
+      signingPublicKeyJwk: parsed.signingPublicKeyJwk as JsonWebKey,
+      encryptionPublicKeyJwk: parsed.encryptionPublicKeyJwk as JsonWebKey,
+      signingKeyId: typeof parsed.signingKeyId === 'string' ? parsed.signingKeyId : undefined,
+      encryptionKeyId: typeof parsed.encryptionKeyId === 'string' ? parsed.encryptionKeyId : undefined,
+      signingFingerprint: await getClientSideServerPublicKeyFingerprint(parsed.signingPublicKeyJwk as JsonWebKey),
+      encryptionFingerprint: await getClientSideServerEncryptionPublicKeyFingerprint(parsed.encryptionPublicKeyJwk as JsonWebKey),
+      trustedAt,
+      source: 'manual',
+    } satisfies ClientSideServerTrustedServerRecordV2
+  }
+
+  if (parsed.protocol === 'plat-css-authority-v1' && isRecord(parsed.publicKeyJwk)) {
+    assertPinnedIdentityServerName(serverName, parsed.serverName)
+    return {
+      serverName,
+      publicKeyJwk: parsed.publicKeyJwk as JsonWebKey,
+      keyId: typeof parsed.keyId === 'string' ? parsed.keyId : undefined,
+      fingerprint: await getClientSideServerPublicKeyFingerprint(parsed.publicKeyJwk as JsonWebKey),
+      trustedAt,
+      source: 'manual',
+    } satisfies ClientSideServerTrustedServerRecord
+  }
+
+  if (isRecord(parsed.signing) && isRecord(parsed.encryption)) {
+    const bundle = parsed as unknown as ClientSideServerResolvedIdentityBundle
+    return {
+      serverName,
+      signingPublicKeyJwk: bundle.signing.publicKeyJwk,
+      encryptionPublicKeyJwk: bundle.encryption.publicKeyJwk,
+      signingKeyId: bundle.signing.keyId,
+      encryptionKeyId: bundle.encryption.keyId,
+      signingFingerprint:
+        bundle.signing.fingerprint || await getClientSideServerPublicKeyFingerprint(bundle.signing.publicKeyJwk),
+      encryptionFingerprint:
+        bundle.encryption.fingerprint || await getClientSideServerEncryptionPublicKeyFingerprint(bundle.encryption.publicKeyJwk),
+      trustedAt,
+      source: 'manual',
+    } satisfies ClientSideServerTrustedServerRecordV2
+  }
+
+  if (isRecord(parsed.signingPublicKeyJwk) && isRecord(parsed.encryptionPublicKeyJwk)) {
+    assertPinnedIdentityServerName(serverName, parsed.serverName)
+    return {
+      serverName,
+      signingPublicKeyJwk: parsed.signingPublicKeyJwk as JsonWebKey,
+      encryptionPublicKeyJwk: parsed.encryptionPublicKeyJwk as JsonWebKey,
+      signingKeyId: typeof parsed.signingKeyId === 'string' ? parsed.signingKeyId : undefined,
+      encryptionKeyId: typeof parsed.encryptionKeyId === 'string' ? parsed.encryptionKeyId : undefined,
+      signingFingerprint:
+        typeof parsed.signingFingerprint === 'string'
+          ? parsed.signingFingerprint
+          : await getClientSideServerPublicKeyFingerprint(parsed.signingPublicKeyJwk as JsonWebKey),
+      encryptionFingerprint:
+        typeof parsed.encryptionFingerprint === 'string'
+          ? parsed.encryptionFingerprint
+          : await getClientSideServerEncryptionPublicKeyFingerprint(parsed.encryptionPublicKeyJwk as JsonWebKey),
+      trustedAt,
+      source: 'manual',
+    } satisfies ClientSideServerTrustedServerRecordV2
+  }
+
+  if (isRecord(parsed.publicKeyJwk)) {
+    assertPinnedIdentityServerName(serverName, parsed.serverName)
+    return {
+      serverName,
+      publicKeyJwk: parsed.publicKeyJwk as JsonWebKey,
+      keyId: typeof parsed.keyId === 'string' ? parsed.keyId : undefined,
+      fingerprint:
+        typeof parsed.fingerprint === 'string'
+          ? parsed.fingerprint
+          : await getClientSideServerPublicKeyFingerprint(parsed.publicKeyJwk as JsonWebKey),
+      trustedAt,
+      source: 'manual',
+    } satisfies ClientSideServerTrustedServerRecord
+  }
+
+  if (looksLikeJsonWebKey(parsed)) {
+    const publicKeyJwk = parsed as JsonWebKey
+    return {
+      serverName,
+      publicKeyJwk,
+      keyId: typeof parsed.kid === 'string' ? parsed.kid : undefined,
+      fingerprint: await getClientSideServerPublicKeyFingerprint(publicKeyJwk),
+      trustedAt,
+      source: 'manual',
+    } satisfies ClientSideServerTrustedServerRecord
+  }
+
+  throw new Error(
+    'Pinned identity JSON must be a signing JWK, a trusted identity record, a resolved identity bundle, '
+    + 'or a signed authority record payload.',
+  )
+}
