@@ -1411,6 +1411,11 @@ function pickBodyFields(
 
 /**
  * Fetches the OpenAPI spec from the given baseUrl and returns a new OpenAPIClient instance.
+ *
+ * Singleton-cached on `globalThis.__PLAT_CLIENTS__` keyed by the normalized baseUrl,
+ * so concurrent callers (and any pre-warmed bridge population) share one in-flight
+ * build. Failed builds evict so the next call retries.
+ *
  * @param baseUrl The base URL of the API server
  * @param options Optional OpenAPIClient options
  */
@@ -1418,8 +1423,20 @@ export async function createClient<THeaders extends Record<string, HeaderValue |
   baseUrl: string,
   options?: Partial<OpenAPIClientOptions<THeaders>>,
 ): Promise<OpenAPIClientInstance<any, THeaders>> {
-  const spec = await fetch(`${baseUrl.replace(/\/$/, '')}/openapi.json`).then(r => r.json());
-  return new OpenAPIClient(spec, { ...options, baseUrl });
+  // Strip trailing slash so baseUrl + path joins cleanly: '/' + '/foo' would
+  // become '//foo' — a protocol-relative URL the browser parses as a hostname.
+  const normalizedBase = String(baseUrl).replace(/\/$/, '');
+  const cache = ((globalThis as any).__PLAT_CLIENTS__ ??= {}) as Record<string, Promise<OpenAPIClientInstance<any, THeaders>>>;
+  const key = normalizedBase || '/';
+  const existing = cache[key];
+  if (existing) return existing;
+  const promise = (async () => {
+    const spec = await fetch(`${normalizedBase}/openapi.json`).then(r => r.json());
+    return new OpenAPIClient(spec, { ...options, baseUrl: normalizedBase }) as OpenAPIClientInstance<any, THeaders>;
+  })();
+  cache[key] = promise;
+  promise.catch(() => { if (cache[key] === promise) delete cache[key]; });
+  return promise;
 }
 
 interface OpenAPIClientConstructor {
