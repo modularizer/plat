@@ -24,7 +24,22 @@ export interface PLATHTTPBridgeOptions extends ClientSideServerMQTTWebRTCOptions
   /** css:// name the bridge registers as (e.g. "my-api" or "authority.com/my-api"). */
   name: string
   /** Base URL of the upstream HTTP server the bridge forwards to. */
-  upstream: string
+  upstream?: string
+  /**
+   * How the bridge chooses the upstream origin.
+   * - `fixed`: always use `upstream`
+   * - `request-origin`: use the requestOrigin sent by the caller
+   * - `intercept-origin`: use the intercepted origin sent by the caller
+   */
+  upstreamMode?: 'fixed' | 'request-origin' | 'intercept-origin'
+  /**
+   * How forwarded paths are resolved against upstream base.
+   * - `origin-root`: standard browser semantics for leading-slash paths
+   * - `route-base`: prefix leading-slash paths with intercepted route base
+   */
+  pathBaseMode?: 'origin-root' | 'route-base'
+  /** Optional logger for lifecycle and per-request bridge activity. */
+  logger?: (...args: unknown[]) => void
   /** Label used in X-Forwarded-By / Forwarded by=. Defaults to `name`. */
   bridgeName?: string
   /** If true, append to a client-supplied X-Forwarded-For rather than overwrite. */
@@ -54,7 +69,10 @@ export interface PLATHTTPBridge {
 export function createHTTPBridge(options: PLATHTTPBridgeOptions): PLATHTTPBridge {
   const forwarder = createHTTPForwarder({
     upstream: options.upstream,
+    upstreamMode: options.upstreamMode,
+    pathBaseMode: options.pathBaseMode,
     cssName: options.name,
+    logger: options.logger,
     bridgeName: options.bridgeName,
     trustClientForwarded: options.trustClientForwarded,
     disableForwardedHeaders: options.disableForwardedHeaders,
@@ -72,9 +90,18 @@ export function createHTTPBridge(options: PLATHTTPBridgeOptions): PLATHTTPBridge
       return `css://${options.name}`
     },
     async start() {
+      options.logger?.('[plat-bridge] starting', {
+        cssUrl: `css://${options.name}`,
+        upstream: options.upstream,
+        upstreamMode: options.upstreamMode ?? 'fixed',
+        pathBaseMode: options.pathBaseMode ?? 'origin-root',
+      })
       const {
         name,
         upstream: _upstream,
+        upstreamMode: _upstreamMode,
+        pathBaseMode: _pathBaseMode,
+        logger: _logger,
         bridgeName: _bridgeName,
         trustClientForwarded: _trust,
         disableForwardedHeaders: _dis,
@@ -94,12 +121,22 @@ export function createHTTPBridge(options: PLATHTTPBridgeOptions): PLATHTTPBridge
         workerInfo,
       })
       await signaler.start()
+      options.logger?.('[plat-bridge] listening', {
+        cssUrl: signaler.connectionUrl,
+        upstream: options.upstream,
+        upstreamMode: options.upstreamMode ?? 'fixed',
+        pathBaseMode: options.pathBaseMode ?? 'origin-root',
+      })
     },
     async stop() {
       if (!signaler) return
+      options.logger?.('[plat-bridge] stopping', {
+        cssUrl: signaler.connectionUrl,
+      })
       const s = signaler
       signaler = undefined
       await s.stop()
+      options.logger?.('[plat-bridge] stopped')
     },
   }
 }

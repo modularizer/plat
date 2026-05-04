@@ -106,6 +106,9 @@ function serviceWorkerRuntime() {
     method: string
     path: string
     headers: Record<string, string>
+    clientOrigin?: string
+    requestOrigin?: string
+    interceptOrigin?: string
     bodyEncoding: 'none' | 'base64'
     body?: string
   }
@@ -196,6 +199,14 @@ function serviceWorkerRuntime() {
     return all[0]
   }
 
+  function getClientOrigin(client: any | undefined): string | undefined {
+    try {
+      return client?.url ? new URL(client.url).origin : undefined
+    } catch {
+      return undefined
+    }
+  }
+
   // Listen for responses from main thread
   // @ts-ignore - Service Worker event
   self.addEventListener('message', (event: any) => {
@@ -242,6 +253,8 @@ function serviceWorkerRuntime() {
           if (!target) {
             throw new Error('No client available to handle request')
           }
+          const requestUrl = new URL(event.request.url)
+          const interceptOrigin = resolveInterceptOriginFromClient(target, requestUrl)
 
           const responsePromise = new Promise<any>((resolve, reject) => {
             pending.set(id, { resolve, reject })
@@ -254,6 +267,9 @@ function serviceWorkerRuntime() {
             method,
             path,
             headers,
+            clientOrigin: getClientOrigin(target),
+            requestOrigin: requestUrl.origin,
+            interceptOrigin,
             bodyEncoding: body ? 'base64' : 'none',
             body,
           }
@@ -307,5 +323,24 @@ function serviceWorkerRuntime() {
     // @ts-ignore - Service Worker global API
     self.skipWaiting()
   })
+}
+
+function resolveInterceptOriginFromClient(
+  client: { url?: string },
+  requestUrl: URL,
+): string {
+  const clientUrlRaw = client?.url
+  if (!clientUrlRaw) return requestUrl.origin
+
+  try {
+    const clientUrl = new URL(clientUrlRaw)
+    if (clientUrl.origin !== requestUrl.origin) return requestUrl.origin
+
+    const firstSegment = clientUrl.pathname.split('/').filter(Boolean)[0]
+    if (!firstSegment) return requestUrl.origin
+    return `${requestUrl.origin}/${firstSegment}`
+  } catch {
+    return requestUrl.origin
+  }
 }
 

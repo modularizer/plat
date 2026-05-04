@@ -4,6 +4,7 @@ export interface PLATServerResolvedOperation {
   method: string
   path: string
   methodName: string
+  isWildcard?: boolean
   boundMethod: Function
   controllerTag: string
   routeMeta: any

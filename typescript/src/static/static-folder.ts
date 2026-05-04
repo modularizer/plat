@@ -30,6 +30,8 @@ export interface StaticFolderOpts {
   onDirectory?: 'none' | 'index' | 'list' | 'directory' | ((files: string[]) => FileResponse | Promise<FileResponse>)
   /** Index file to serve for directory requests when onDirectory is 'index' (e.g. 'index.html') */
   index?: string
+  /** Serve the index file for extensionless route misses, for SPA routing. Default: false */
+  spa?: boolean
 }
 
 /**
@@ -139,10 +141,14 @@ export class StaticFolder {
 
     // Stem matching: if no extension, look for unique match
     if (!this.hasExtension(normalized)) {
-      return this.stemMatch(normalized)
+      const stemMatch = await this.stemMatch(normalized)
+      if (stemMatch) return stemMatch
+
+      const fallback = await this.resolveSpaFallback(normalized)
+      if (fallback) return fallback
     }
 
-    return null
+    return this.resolveNotFoundFallback()
   }
 
   private isDotfile(path: string): boolean {
@@ -220,6 +226,28 @@ export class StaticFolder {
     }
 
     return null
+  }
+
+  private async resolveSpaFallback(normalizedPath: string): Promise<FileResponse | null> {
+    const onDir = this.opts.onDirectory ?? (this.opts.index ? 'index' : 'none')
+    if (!this.opts.spa || onDir !== 'index' || !this.opts.index || this.hasExtension(normalizedPath)) return null
+
+    const content = await this.vfs.read(this.opts.index)
+    if (content === null) return null
+
+    return this.createFileResponse(content, this.opts.index)
+  }
+
+  private async resolveNotFoundFallback(): Promise<FileResponse | null> {
+    const content = await this.vfs.read('404.html')
+    if (content === null) return null
+
+    return FileResponse.from(content, '404.html', {
+      contentType: getMimeType('404.html'),
+      maxAge: this.opts.maxAge,
+      headers: this.opts.headers,
+      status: 404,
+    })
   }
 
   private renderDirectoryPage(dirPath: string, entries: string[]): string {

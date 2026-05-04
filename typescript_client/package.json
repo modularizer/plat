@@ -46,7 +46,8 @@
     "dist"
   ],
   "scripts": {
-    "build": "cd ../typescript && tsx scripts/gen-python-browser-sources.ts && cd ../typescript_client && tsc && tsx ../typescript/scripts/rewrite-relative-imports.ts"
+    "build": "cd ../typescript && tsx scripts/gen-python-browser-sources.ts && cd ../typescript_client && tsc && tsx ../typescript/scripts/rewrite-relative-imports.ts && npm run build:bundle",
+    "build:bundle": "esbuild ../typescript/src/client-server-entry.ts --bundle --platform=browser --format=esm --target=es2022 --sourcemap --outfile=dist/client-server-entry.bundle.js"
   },
   "dependencies": {
     "mqtt": "^5.15.1",

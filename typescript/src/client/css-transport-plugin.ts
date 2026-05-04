@@ -7,6 +7,7 @@ import {
   type ClientSideServerMode,
 } from '../client-side-server/signaling'
 import type { ClientSideServerChannel } from '../client-side-server/channel'
+import type { ClientSideServerRequestOriginMetadata } from '../client-side-server/protocol'
 import type {
   OpenAPIClientTransportOutcome,
   OpenAPIClientTransportPlugin,
@@ -41,7 +42,7 @@ export function createClientSideServerTransportPlugin(
       return { channel }
     },
     async sendRequest(connection, request) {
-      const rpcRequest: PLATRPCRequest = {
+      const rpcRequest: PLATRPCRequest & ClientSideServerRequestOriginMetadata = {
         jsonrpc: '2.0',
         id: request.id,
         operationId: request.operationId,
@@ -49,6 +50,7 @@ export function createClientSideServerTransportPlugin(
         path: request.path,
         headers: stringifyHeaders(request.headers),
         input: request.params,
+        ...resolveRequestOrigins(request),
       }
 
       connection.result = await new Promise<PLATRPCResponse>((resolve, reject) => {
@@ -98,6 +100,46 @@ export function createClientSideServerTransportPlugin(
       await connection.channel.close?.()
     },
   }
+}
+
+function resolveRequestOrigins(
+  request: OpenAPIClientTransportRequest,
+): ClientSideServerRequestOriginMetadata {
+  const clientOrigin = getWindowOrigin()
+  const requestUrl = resolveRequestUrl(request)
+  const requestOrigin = requestUrl?.origin
+  return {
+    clientOrigin,
+    requestOrigin,
+    interceptOrigin: requestOrigin,
+  }
+}
+
+function resolveRequestUrl(request: OpenAPIClientTransportRequest): URL | undefined {
+  const candidates = [request.url, request.baseUrl]
+  for (const candidate of candidates) {
+    if (!candidate) continue
+    try {
+      return new URL(candidate, getWindowHref())
+    } catch {
+      // ignore invalid candidates
+    }
+  }
+  try {
+    return new URL(request.path, getWindowHref())
+  } catch {
+    return undefined
+  }
+}
+
+function getWindowHref(): string {
+  if (typeof window !== 'undefined' && window.location?.href) return window.location.href
+  return 'http://localhost/'
+}
+
+function getWindowOrigin(): string | undefined {
+  if (typeof window !== 'undefined' && window.location?.origin) return window.location.origin
+  return undefined
 }
 
 function stringifyHeaders(

@@ -7,6 +7,7 @@
 import type { ClientSideServerChannel } from './channel'
 import { createPlatFetch } from './plat-fetch'
 import type {
+  ClientSideServerRequestOriginMetadata,
   ServiceWorkerBridgeRequestMessage,
   ServiceWorkerBridgeResponseMessage,
 } from './protocol'
@@ -76,7 +77,10 @@ export function installServiceWorkerClient(
         method: msg.method,
         headers: msg.headers,
         body: requestBody as BodyInit | undefined,
-      })
+        clientOrigin: msg.clientOrigin,
+        requestOrigin: msg.requestOrigin,
+        interceptOrigin: msg.interceptOrigin,
+      } as RequestInit & ClientSideServerRequestOriginMetadata)
 
       // Read response body
       const responseBody = await resp.arrayBuffer()
@@ -177,5 +181,4 @@ export function installNavigationRepairShim(options: NavigationRepairOptions): N
     },
   }
 }
-
 

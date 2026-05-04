@@ -107,6 +107,12 @@ export type ClientSideServerSealedPayload =
 
 export type ServiceWorkerBridgeBodyEncoding = 'none' | 'base64'
 
+export interface ClientSideServerRequestOriginMetadata {
+  clientOrigin?: string
+  requestOrigin?: string
+  interceptOrigin?: string
+}
+
 export interface ServiceWorkerBridgeRequestMessage {
   type: 'PLAT_REQUEST'
   id: string
@@ -114,6 +120,17 @@ export interface ServiceWorkerBridgeRequestMessage {
   method: string
   path: string
   headers: Record<string, string>
+  destination?: RequestDestination | ''
+  mode?: RequestMode
+  credentials?: RequestCredentials
+  cache?: RequestCache
+  redirect?: RequestRedirect
+  referrer?: string
+  referrerPolicy?: ReferrerPolicy
+  integrity?: string
+  clientOrigin?: string
+  requestOrigin?: string
+  interceptOrigin?: string
   bodyEncoding: ServiceWorkerBridgeBodyEncoding
   body?: string
 }
@@ -124,6 +141,7 @@ export interface ServiceWorkerBridgeResponseMessage {
   status: number
   statusText: string
   headers: Record<string, string>
+  finalUrl?: string
   bodyEncoding: ServiceWorkerBridgeBodyEncoding
   body?: string
   error?: string
@@ -137,7 +155,12 @@ export interface ClientSideServerRequest {
   method: string
   path: string
   headers?: Record<string, string>
+  clientOrigin?: string
+  requestOrigin?: string
+  interceptOrigin?: string
   input?: unknown
+  bodyEncoding?: ServiceWorkerBridgeBodyEncoding
+  body?: string
   cancel?: boolean
 }
 
@@ -368,4 +391,3 @@ function isOptionalAuthObject(value: unknown): value is { username: string; pass
     && typeof value.password === 'string'
   )
 }
-

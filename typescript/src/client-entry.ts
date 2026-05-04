@@ -13,6 +13,7 @@ export * from './client-side-server/secure-crypto'
 export * from './client-side-server/runtime'
 export * from './client-side-server/signaling'
 export * from './client-side-server/source-analysis'
+export * from './bridge/index'
 export {
   OpenAPIClient,
   type HeadersInit,

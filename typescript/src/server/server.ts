@@ -27,6 +27,7 @@ import { PLATOperationRegistry } from './operation-registry'
 import { PLATServerCore, type RegisteredStaticFolder } from './core'
 import { createAuthorityServerController } from './authority-server'
 import { isFileResponse, type FileResponse } from '../static/file-response'
+import { createWildcardRouteMatcher } from './routing'
 
 interface OperationExecutionResult {
     kind: 'success' | 'help'
@@ -483,12 +484,26 @@ export class PLATServer {
      * No path parameters in decorators - all routing is done by method names.
      */
     register(...ControllerClasses: (new () => any)[]): PLATServer {
+        const exactRegistrations: Array<{ registered: ReturnType<PLATServerCore['registerControllers']>[number]; handler: (req: Request, res: Response, next: NextFunction) => Promise<void> }> = []
+        const wildcardRegistrations: Array<{ registered: ReturnType<PLATServerCore['registerControllers']>[number]; handler: (req: Request, res: Response, next: NextFunction) => Promise<void> }> = []
+
         for (const registered of this.core.registerControllers(...ControllerClasses)) {
                 const { operation: rpcOperation, route } = registered
-                const { methodName, path: fullPath } = route
-                const httpMethod = route.method.toLowerCase() as 'get' | 'post' | 'put' | 'patch' | 'delete'
+                const { methodName } = route
                 const routeMeta = rpcOperation.routeMeta
-                const handler = async (req: Request, res: Response) => {
+                const handler = async (req: Request, res: Response, next: NextFunction) => {
+                    if (rpcOperation.isWildcard) {
+                        const resolved = this.resolveOperation({
+                            method: req.method,
+                            path: req.path,
+                        })
+                        if (!resolved || resolved.methodName !== rpcOperation.methodName) {
+                            next()
+                            return
+                        }
+                    }
+
+                    const requestPath = rpcOperation.isWildcard ? req.path : rpcOperation.path
                     let input: Record<string, any> = {
                         ...req.params,
                         ...req.query,
@@ -515,7 +530,7 @@ export class PLATServer {
                             const session = this.options.calls.controller.create({
                                 operationId: methodName,
                                 method: req.method,
-                                path: fullPath,
+                                path: requestPath,
                             })
                             const abortController = new AbortController()
                             this.options.calls.controller.setCancel(session.id, () => abortController.abort())
@@ -541,7 +556,7 @@ export class PLATServer {
                             const deferredEnvelope: PLATServerCallEnvelope = {
                                 protocol: 'http',
                                 method: req.method,
-                                path: fullPath,
+                                path: requestPath,
                                 headers: req.headers as Record<string, string>,
                                 input,
                                 ctx,
@@ -576,7 +591,7 @@ export class PLATServer {
                         const execution = await this.dispatchTransportCall(rpcOperation, {
                             protocol: 'http',
                             method: req.method,
-                            path: fullPath,
+                            path: requestPath,
                             headers: req.headers as Record<string, string>,
                             input,
                             ctx,
@@ -631,12 +646,32 @@ export class PLATServer {
                     }
                 }
 
-                // Register route with Express (canonical route)
-                this.app[httpMethod](fullPath, handler)
-
-                for (const variant of registered.variants) {
-                    this.app[variant.method.toLowerCase() as 'get' | 'post' | 'put' | 'patch' | 'delete'](variant.path, handler)
+                if (rpcOperation.isWildcard) {
+                    wildcardRegistrations.push({ registered, handler })
+                } else {
+                    exactRegistrations.push({ registered, handler })
                 }
+        }
+
+        for (const { registered, handler } of exactRegistrations) {
+            this.registerExpressRoute(registered.route.method, registered.operation.path, handler)
+            for (const variant of registered.variants) {
+                this.registerExpressRoute(variant.method, variant.path, handler)
+            }
+        }
+
+        for (const { registered, handler } of wildcardRegistrations) {
+            const wildcardRoutes = [
+                { method: registered.operation.method, path: registered.operation.path },
+                ...registered.variants,
+            ]
+            const seen = new Set<string>()
+            for (const wildcardRoute of wildcardRoutes) {
+                const key = `${wildcardRoute.method} ${wildcardRoute.path}`
+                if (seen.has(key)) continue
+                seen.add(key)
+                this.registerWildcardExpressRoute(wildcardRoute.method, wildcardRoute.path, handler)
+            }
         }
 
         // Register static folder routes (after all API routes for correct priority)
@@ -1260,7 +1295,7 @@ export class PLATServer {
         return this.executeOperation({
             methodName: operation.methodName,
             controllerTag: operation.controllerTag,
-            fullPath: operation.path,
+            fullPath: envelope.path,
             transportMethod: envelope.method,
             routeMeta: operation.routeMeta,
             controllerMeta: operation.controllerMeta,
@@ -1515,6 +1550,28 @@ export class PLATServer {
             })
         })
         this.httpServer = undefined
+    }
+
+    private registerExpressRoute(
+        method: string,
+        path: string | RegExp,
+        handler: (req: Request, res: Response, next: NextFunction) => Promise<void>,
+    ): void {
+        this.app[method.toLowerCase() as 'get' | 'post' | 'put' | 'patch' | 'delete'](path, handler)
+    }
+
+    private registerWildcardExpressRoute(
+        method: string,
+        basePath: string,
+        handler: (req: Request, res: Response, next: NextFunction) => Promise<void>,
+    ): void {
+        const matcher = createWildcardRouteMatcher(basePath)
+        if (method === '*') {
+            this.app.all(matcher, handler)
+            return
+        }
+
+        this.registerExpressRoute(method, matcher, handler)
     }
 
     private registerStaticFolderRoutes(): void {

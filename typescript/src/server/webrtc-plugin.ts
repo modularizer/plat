@@ -177,8 +177,8 @@ async function handleRequest(
         : {},
     )
     const ctx: RouteContext = {
-      method: operation.method,
-      url: operation.path,
+      method: message.method,
+      url: message.path,
       headers: message.headers ?? {},
       opts: operation.routeMeta?.opts,
     }

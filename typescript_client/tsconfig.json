@@ -40,6 +40,8 @@
     "../typescript/src/spec/**/*",
     "../typescript/src/shared/**/*",
     "../typescript/src/args/**/*",
+    "../typescript/src/bridge/index.ts",
+    "../typescript/src/bridge/http-forwarder.ts",
     "../typescript/src/generated/**/*",
     "../typescript/src/server/core.ts",
     "../typescript/src/server/operation-registry.ts",

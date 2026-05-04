@@ -454,9 +454,12 @@ export class PLATClientSideServer {
     )
 
     const ctx: RouteContext = {
-      method: operation.method,
-      url: operation.path,
+      method: request.method,
+      url: request.path,
       headers: request.headers ?? {},
+      clientOrigin: request.clientOrigin,
+      requestOrigin: request.requestOrigin,
+      interceptOrigin: request.interceptOrigin,
       opts: operation.routeMeta?.opts,
     }
 

@@ -1,5 +1,10 @@
 import { createToolDefinition } from './tools'
-import { generateRouteVariants } from './routing'
+import {
+  generateRouteVariants,
+  getWildcardBasePath,
+  getWildcardDisplayPath,
+  isWildcardMethodName,
+} from './routing'
 import { ensureControllerMeta, ensureRouteMeta, getControllerMeta, pendingRoutes, ROUTE_METADATA_KEY } from '../spec'
 import type { ControllerMeta, RouteMeta } from '../types/endpoints'
 import type { PLATServerResolvedOperation } from './transports'
@@ -97,12 +102,14 @@ export class PLATServerCore {
         }
         this.stores.registeredMethodNames.add(methodName)
 
-        const fullPath = '/' + methodName
+        const wildcard = isWildcardMethodName(methodName)
+        const fullPath = wildcard ? getWildcardBasePath(methodName) : '/' + methodName
+        const displayPath = wildcard ? getWildcardDisplayPath(methodName) : fullPath
         const routeMeta = freshMeta?.routes.get(key)
         this.stores.tools.set(methodName, createToolDefinition({
           name: methodName,
           summary: routeMeta?.summary ?? routeMeta?.opts?.summary,
-          description: routeMeta?.description ?? routeMeta?.opts?.description ?? `${route.method.toUpperCase()} ${fullPath}`,
+          description: routeMeta?.description ?? routeMeta?.opts?.description ?? `${route.method.toUpperCase()} ${displayPath}`,
           method: route.method,
           path: fullPath,
           controller: controllerTag,
@@ -111,7 +118,7 @@ export class PLATServerCore {
             ...((Array.isArray(routeMeta?.opts?.tags) ? routeMeta?.opts?.tags : []) as string[]),
           ].filter((value, index, arr) => Boolean(value) && arr.indexOf(value) === index),
           examples: Array.isArray(routeMeta?.opts?.examples) ? routeMeta?.opts?.examples : undefined,
-          hidden: routeMeta?.opts?.hidden === true,
+          hidden: routeMeta?.opts?.hidden === true || wildcard,
           safe: routeMeta?.opts?.safe ?? ['GET', 'HEAD'].includes(route.method.toUpperCase()),
           idempotent: routeMeta?.opts?.idempotent ?? ['GET', 'HEAD', 'PUT', 'DELETE'].includes(route.method.toUpperCase()),
           longRunning: routeMeta?.opts?.longRunning === true,
@@ -136,6 +143,7 @@ export class PLATServerCore {
           method: route.method.toUpperCase(),
           path: fullPath,
           methodName,
+          isWildcard: wildcard,
           boundMethod: (instance as any)[methodName].bind(instance),
           controllerTag,
           routeMeta,
@@ -145,7 +153,7 @@ export class PLATServerCore {
 
         const routeRecord = {
           method: route.method.toUpperCase(),
-          path: fullPath,
+          path: displayPath,
           methodName,
         }
         this.stores.routes.push(routeRecord)
@@ -167,8 +175,11 @@ export class PLATServerCore {
     const routes = pendingRoutes.get(ControllerClass)!
     for (const route of routes) {
       const routeMeta = ensureRouteMeta(ControllerClass as Function, route.key)
+      const methodName = String(route.key)
       routeMeta.method = route.method
-      routeMeta.path = '/' + String(route.key)
+      routeMeta.path = isWildcardMethodName(methodName)
+        ? getWildcardDisplayPath(methodName)
+        : '/' + methodName
       routeMeta.auth = route.opts?.auth
       routeMeta.rateLimit = route.opts?.rateLimit
       routeMeta.tokenLimit = route.opts?.tokenLimit
@@ -192,10 +203,11 @@ export class PLATServerCore {
       const method = ControllerClass.prototype[key]
       if (typeof method !== 'function') continue
       const routeData = method[ROUTE_METADATA_KEY]
+      const wildcard = isWildcardMethodName(key)
       if (routeData) {
         routes.set(key, { method: routeData.httpMethod })
       } else if (undecoratedMode !== 'private') {
-        routes.set(key, { method: undecoratedMode })
+        routes.set(key, { method: wildcard ? '*' : undecoratedMode })
       }
     }
 
@@ -207,7 +219,10 @@ export class PLATServerCore {
           continue
         }
 
-        const inferredMethod = routeMeta.method ?? (undecoratedMode !== 'private' ? undecoratedMode : undefined)
+        const inferredMethod = routeMeta.method
+          ?? (undecoratedMode !== 'private'
+            ? (isWildcardMethodName(keyName) ? '*' : undecoratedMode)
+            : undefined)
         if (!inferredMethod) continue
 
         routes.set(key, { method: inferredMethod })
@@ -224,22 +239,23 @@ export class PLATServerCore {
   }
 
   private extractMethodPrefix(methodName: string): string | null {
+    const subject = methodName.endsWith('$') ? methodName.slice(0, -1) : methodName
     const standardPrefixes = ['create', 'update', 'delete', 'list', 'find', 'send', 'get', 'do']
     for (const prefix of standardPrefixes) {
-      if (methodName.startsWith(prefix) && methodName.length > prefix.length) {
-        const nextChar = methodName.charAt(prefix.length)
+      if (subject.startsWith(prefix) && subject.length > prefix.length) {
+        const nextChar = subject.charAt(prefix.length)
         if (nextChar === nextChar.toUpperCase()) {
           return prefix
         }
       }
     }
-    for (let i = 1; i < methodName.length; i++) {
-      const char = methodName.charAt(i)
+    for (let i = 1; i < subject.length; i++) {
+      const char = subject.charAt(i)
       if (char === char.toUpperCase() && char !== char.toLowerCase()) {
-        return methodName.substring(0, i)
+        return subject.substring(0, i)
       }
     }
-    return methodName.length > 0 ? methodName : null
+    return subject.length > 0 ? subject : null
   }
 
   private collectStaticFolders(instance: any, controllerTag: string): void {

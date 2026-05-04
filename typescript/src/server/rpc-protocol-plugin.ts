@@ -117,8 +117,8 @@ export function attachRpcProtocolPlugin(
         )
 
         const ctx: RouteContext = {
-          method: operation.method,
-          url: operation.path,
+          method: request.method,
+          url: request.path,
           headers: request.headers ?? {},
           opts: operation.routeMeta?.opts,
         }

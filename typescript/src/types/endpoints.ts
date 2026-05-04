@@ -57,6 +57,9 @@ export interface RouteContext {
     method?: string
     url?: string
     headers?: Record<string, string | string[]>
+    clientOrigin?: string
+    requestOrigin?: string
+    interceptOrigin?: string
     auth?: { mode: AuthMode; user?: any }
     rateLimit?: RateLimitContext
     tokenLimit?: TokenLimitContext
