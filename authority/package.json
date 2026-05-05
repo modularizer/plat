@@ -1,6 +1,6 @@
 {
   "name": "@modularizer/plat-authority",
-  "version": "0.15.0",
+  "version": "0.16.0",
   "type": "module",
   "description": "Standalone authority/control-plane service for PLAT authority-mode CSS routing.",
   "main": "./dist/index.js",
@@ -32,7 +32,7 @@
     "pg": "^8.11.0",
     "redis": "^4.7.0",
     "ws": "^8.18.3",
-    "@modularizer/plat": "file:../typescript"
+    "@modularizer/plat": "^0.16.0"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",
