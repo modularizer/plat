@@ -65,7 +65,7 @@ docker-compose exec authority npm run db:push
 # Generate migrations from schema changes
 docker-compose exec authority npm run db:generate
 
-# View database (if POSTGRES_EXPOSE=true)
+# View database
 psql -h localhost -U plat -d plat_authority
 ```
 

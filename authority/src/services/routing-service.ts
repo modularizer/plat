@@ -193,6 +193,7 @@ export function getSubpathFromServerName(serverName: string): string {
 
 export function isNamespaceReserved(namespace: string): boolean {
   const lowered = namespace.trim().toLowerCase()
+  const reserved = ['dmz', 'z', 'api', 'studio', 'admin', 'auth', 'ide', 'dev', 'test', 'sample', 'user', 'me', 'home', 'profile', 'account', 'signin', 'login', 'signup', 'register', 'logout', 'signout', 'docs', 'playground', 'superuser']
   if (lowered === 'dmz' || lowered === 'x' || lowered === 'api') {
     return true
   }
