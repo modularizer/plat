@@ -5,8 +5,11 @@
 
 import { createClientProxy } from './proxy'
 import type { EndpointDef } from '../types'
+import { z } from 'zod'
 
 const BASE_URL = 'http://localhost:3000'
+const inputSchema = z.object({}).passthrough()
+const outputSchema = z.object({})
 
 describe('Client Proxy', () => {
   // Mock controller class for testing
@@ -21,22 +24,40 @@ describe('Client Proxy', () => {
       methodName: 'getUser',
       controller: TestController,
       method: 'GET',
+      httpMethod: 'GET',
       path: '/getUser',
+      fullPath: '/getUser',
+      routePath: '/getUser',
+      controllerName: 'TestController',
       operationId: 'getUser',
+      inputSchema,
+      outputSchema,
     },
     {
       methodName: 'listUsers',
       controller: TestController,
       method: 'GET',
+      httpMethod: 'GET',
       path: '/listUsers',
+      fullPath: '/listUsers',
+      routePath: '/listUsers',
+      controllerName: 'TestController',
       operationId: 'listUsers',
+      inputSchema,
+      outputSchema,
     },
     {
       methodName: 'createUser',
       controller: TestController,
       method: 'POST',
+      httpMethod: 'POST',
       path: '/createUser',
+      fullPath: '/createUser',
+      routePath: '/createUser',
+      controllerName: 'TestController',
       operationId: 'createUser',
+      inputSchema,
+      outputSchema,
     },
   ] as any[]
 
@@ -215,6 +236,22 @@ describe('Client Proxy', () => {
       // Try to access a property that shouldn't exist
       expect((proxy as any).constructor).toBeUndefined()
       expect((proxy as any).toString).toBeUndefined()
+    })
+
+    it('should not emit debug console output during ordinary calls', async () => {
+      const fetchMock = jest.fn(async () => new Response('{}', {
+        headers: { 'content-type': 'application/json' },
+      }))
+      const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {})
+      const config = {
+        baseUrl: BASE_URL,
+        fetch: fetchMock,
+      }
+
+      const proxy = createClientProxy(TestController, mockEndpoints, config)
+      await (proxy as any).getUser({ id: '123' })
+
+      expect(logSpy).not.toHaveBeenCalled()
     })
   })
 

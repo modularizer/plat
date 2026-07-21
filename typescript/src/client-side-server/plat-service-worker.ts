@@ -128,7 +128,6 @@ function serviceWorkerRuntime() {
 
   // Interception logic (matches main thread)
   function shouldIntercept(url: string): boolean {
-      console.log("shouldIntercept", url)
     if (url.startsWith('data:') || url.startsWith('blob:') || url.startsWith('javascript:')) return false
     if (url.startsWith('css://')) return true
     try {
@@ -343,4 +342,3 @@ function resolveInterceptOriginFromClient(
     return requestUrl.origin
   }
 }
-

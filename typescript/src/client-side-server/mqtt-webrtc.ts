@@ -2142,7 +2142,6 @@ function normalizeExpectedIdentity(record: ClientSideServerAnyTrustedServerRecor
 
 function debugSecure(event: string, details?: Record<string, unknown>): void {
   if (!(globalThis as any).__PLAT_CSS_DEBUG_SECURE) return
-  console.debug(`[plat-css secure] ${event}`, details ?? {})
 }
 
 function deferred<T>() {

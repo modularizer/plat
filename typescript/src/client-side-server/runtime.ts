@@ -367,11 +367,6 @@ function resolveClientSideServerDefinition(
   module: ClientSideServerSourceModule,
   fallbackServerName?: string,
 ): ClientSideServerDefinition {
-  console.debug('[PLAT] resolveClientSideServerDefinition', { 
-    hasDefault: Boolean(module.default), 
-    hasClientSideServer: Boolean(module.clientSideServer),
-    fallbackServerName 
-  })
   if (module.clientSideServer) return module.clientSideServer
 
   if (module.default && isClientSideServerDefinition(module.default)) {
@@ -389,7 +384,6 @@ function resolveClientSideServerDefinition(
 }
 
 function resolveControllers(module: any): ControllerClass[] {
-  console.debug('[PLAT] resolveControllers', { moduleKeys: module ? Object.keys(module) : [] })
   if (!module) return []
   if (Array.isArray(module.controllers)) return module.controllers
   if (Array.isArray(module.default)) return module.default

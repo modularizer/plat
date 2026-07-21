@@ -115,10 +115,6 @@ function createAssembler() {
       console.warn('[assembler] Duplicate start for file id', { id: meta.id })
       return
     }
-    console.log('[assembler] Starting new file', {
-      id: meta.id,
-      byteLength: meta.byteLength
-    })
     assemblies.set(meta.id, {
       meta,
       received: new Uint8Array(meta.byteLength),

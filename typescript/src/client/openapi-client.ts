@@ -390,7 +390,6 @@ class OpenAPIClientImpl<TSpec extends OpenAPISpec = OpenAPISpec, THeaders extend
     options: OpenAPIClientOptions<THeaders>,
   ) {
     this.baseUrl = options.baseUrl
-      console.warn("building client proxy", options.baseUrl)
     this.headers = this.normalizeHeaders(options.headers)
     this.fetchInit = options.fetchInit
     this.timeoutMs = options.timeoutMs ?? 30000
@@ -508,7 +507,7 @@ class OpenAPIClientImpl<TSpec extends OpenAPISpec = OpenAPISpec, THeaders extend
             ...(request.fetchInit ?? this.fetchInit),
             method: request.method,
             headers: this.stringifyHeaders(request.headers),
-            body: request.body ?? undefined,
+            ...buildFetchBodyInit(request.method, request.body),
             signal: request.signal,
           }),
           this.createTimeoutPromise(request.timeoutMs),
@@ -572,7 +571,6 @@ class OpenAPIClientImpl<TSpec extends OpenAPISpec = OpenAPISpec, THeaders extend
     params: InferParams<TSpec, P, M>,
     options?: O,
   ): Promise<CallReturn<InferResponse<TSpec, P, M>, NonNullable<O>>> {
-      console.log({params, options, ok: 5})
     // Find the operation in the OpenAPI spec by method and path
     const operation = this.findOperationByPath(method, path as string)
     if (!operation) {
@@ -655,7 +653,6 @@ class OpenAPIClientImpl<TSpec extends OpenAPISpec = OpenAPISpec, THeaders extend
 
     // Serialize request body based on format
     let body: BodyInit | undefined
-    console.log({p, requestBody, bod: options?.body})
     if (options?.body) {
       // Raw body passthrough
       body = options.body
@@ -740,7 +737,7 @@ class OpenAPIClientImpl<TSpec extends OpenAPISpec = OpenAPISpec, THeaders extend
             ...this.fetchInit,
             method,
             headers: this.stringifyHeaders(headers),
-            body: body ?? undefined,
+            ...buildFetchBodyInit(method, body),
             signal: options?.signal,
           }),
           this.createTimeoutPromise(timeoutMs),
@@ -1401,12 +1398,18 @@ function pickBodyFields(
   headerParams: string[],
 ): Record<string, unknown> {
   const consumed = new Set<string>([...pathParams, ...queryParams, ...headerParams, '_body'])
-    console.log({p, pathParams, queryParams, headerParams})
   const out: Record<string, unknown> = {}
   for (const k of Object.keys(p)) {
     if (!consumed.has(k)) out[k] = p[k]
   }
   return out
+}
+
+function buildFetchBodyInit(method: HttpMethod, body: BodyInit | undefined): Pick<RequestInit, 'body'> | {} {
+  if (body === undefined || method === HttpMethods.GET || method === HttpMethods.DELETE) {
+    return {}
+  }
+  return { body }
 }
 
 /**
