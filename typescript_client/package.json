@@ -1,6 +1,6 @@
 {
   "name": "@modularizer/plat-client",
-  "version": "0.16.1",
+  "version": "0.17.0",
   "description": "Browser-safe client for Protocol and Language Agnostic Tooling",
   "type": "module",
   "author": {
@@ -50,11 +50,19 @@
     "build:bundle": "esbuild ../typescript/src/client-server-entry.ts --bundle --platform=browser --format=esm --target=es2022 --sourcemap --outfile=dist/client-server-entry.bundle.js"
   },
   "dependencies": {
-    "mqtt": "^5.15.1",
     "typescript": "^5.4.0",
     "zod": "^3.23.0"
   },
   "devDependencies": {
-    "tsx": "^4.7.0"
+    "tsx": "^4.7.0",
+    "mqtt": "^5.15.1"
+  },
+  "peerDependencies": {
+    "mqtt": "^5.15.1"
+  },
+  "peerDependenciesMeta": {
+    "mqtt": {
+      "optional": true
+    }
   }
 }

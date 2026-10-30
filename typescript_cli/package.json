@@ -1,0 +1,28 @@
+{
+  "name": "@modularizer/plat-cli",
+  "version": "0.17.0",
+  "description": "Zero-dependency, extensible CLI for any plat server (plat run, minus the server stack)",
+  "type": "module",
+  "author": { "name": "Torin Halsted", "email": "modularizer@gmail.com", "url": "https://github.com/modularizer" },
+  "license": "Unlicense",
+  "repository": { "type": "git", "url": "https://github.com/modularizer/plat.git" },
+  "bugs": { "url": "https://github.com/modularizer/plat/issues" },
+  "homepage": "https://github.com/modularizer/plat",
+  "sideEffects": false,
+  "bin": { "plat-cli": "./dist/cli-bin.js" },
+  "main": "./dist/cli-entry.js",
+  "types": "./dist/cli-entry.d.ts",
+  "exports": {
+    ".": { "types": "./dist/cli-entry.d.ts", "import": "./dist/cli-entry.js" }
+  },
+  "files": ["dist"],
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "build": "tsc && tsx ../typescript/scripts/rewrite-relative-imports.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.4.0"
+  }
+}

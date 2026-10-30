@@ -1,0 +1,26 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "rootDir": "../typescript/src",
+    "outDir": "./dist",
+    "declaration": true,
+    "sourceMap": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "types": ["node"],
+    "typeRoots": ["./node_modules/@types", "../typescript/node_modules/@types"]
+  },
+  "include": [
+    "../typescript/src/cli-entry.ts",
+    "../typescript/src/cli-bin.ts",
+    "../typescript/src/args/method_name.ts",
+    "../typescript/src/cli/core.ts",
+    "../typescript/src/cli/format.ts",
+    "../typescript/src/cli/http.ts"
+  ]
+}

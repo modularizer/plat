@@ -484,6 +484,34 @@ plat serve
 
 The CLI is available from both Node and Python packaging surfaces, with capability moving toward parity.
 
+Method names are forgiving: `createOrder`, `create-order`, `create_order` and `create order` are the same command.
+
+### Extending the CLI (don't write your own)
+
+`runCli` / `runHttpCli` (and the engine under them, `runCliCore`) take options for everything an app might
+want to do differently, so you never need to bypass plat's CLI:
+
+```ts
+import { runHttpCli } from '@modularizer/plat-cli'   // zero dependencies; or runCli from '@modularizer/plat'
+
+await runHttpCli({
+  baseUrl: () => discoverServer(),                    // or a string; spec defaults to GET /openapi.json
+  headers: () => ({ authorization: `Bearer ${token()}` }),
+  commands: { host: (ctx) => manageHosts(ctx.argv) },  // CLI-only commands; win over spec methods
+  overrides: { runSql: async (ctx, next) => confirmWrites(ctx) && next() },  // wrap/replace a method
+  positional: { runSql: ['datasource', 'query'] },     // `cli run sql shop "select 1"`
+  beforeCall: (ctx) => { ctx.input.limit ??= 100 },    // rewrite input
+  afterCall: (result) => unwrap(result),               // rewrite output
+  onUnknown: ({ candidates }) => suggest(candidates),  // fallback; return true if handled
+  onError: (err) => prettyPrint(err),
+  formatters: { md: toMarkdown }, defaultFormat: 'md',
+  help: (commands) => myHelp(commands),
+})
+```
+
+Also replaceable: `parseArgs`, `resolveName`, `call` (the transport), `spec` (object or async function), `io`.
+If you need something these don't cover, add an option to plat instead of forking the CLI.
+
 ## 🧩 Plugin architecture
 
 The plugin architecture matters, but mostly as an implementation and extension story.

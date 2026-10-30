@@ -1,4 +1,4 @@
-import mqtt, { type IClientOptions, type MqttClient } from 'mqtt'
+import type { IClientOptions, MqttClient } from 'mqtt'
 import { createClientSideServerTransportPlugin } from '../client/css-transport-plugin'
 import type { OpenAPIClientTransportPlugin } from '../client/transport-plugin'
 import { createRTCDataChannelAdapter, type ClientSideServerChannel } from './channel'
@@ -1605,7 +1605,7 @@ export function createClientSideServerMQTTWebRTCServer(
 }
 
 async function connectToBroker(options: ClientSideServerMQTTWebRTCOptions): Promise<MqttClient> {
-  const client = resolveMqttConnect()(
+  const client = (await resolveMqttConnect())(
     options.mqttBroker ?? DEFAULT_CLIENT_SIDE_SERVER_MQTT_BROKER,
     options.mqttOptions,
   )
@@ -1628,8 +1628,16 @@ async function connectToBroker(options: ClientSideServerMQTTWebRTCOptions): Prom
   return client
 }
 
-function resolveMqttConnect(): (brokerUrl: string, options?: IClientOptions) => MqttClient {
-  const connect = mqtt.connect ?? (mqtt as any).default?.connect
+// mqtt is an optional dependency: only a client that actually joins a client-side server pays for
+// it, so a plain HTTP client (and the CLI) never loads or installs it.
+async function resolveMqttConnect(): Promise<(brokerUrl: string, options?: IClientOptions) => MqttClient> {
+  let mqtt: any
+  try {
+    mqtt = await import('mqtt')
+  } catch {
+    throw new Error("Client-side servers need the optional 'mqtt' package: npm install mqtt")
+  }
+  const connect = mqtt.connect ?? mqtt.default?.connect
   if (typeof connect !== 'function') {
     throw new Error('The loaded mqtt module does not expose a connect function')
   }

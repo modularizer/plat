@@ -8,6 +8,7 @@ import path from 'path'
 import { OpenAPIClient } from '../../client/openapi-client'
 import { createClientSideServerMQTTWebRTCTransportPlugin } from '../../client-side-server/mqtt-webrtc'
 import { PLAT_AUTHORITY_URL } from '../../client-side-server/authority-default'
+import { resolveCommand } from '../../args/method_name'
 
 interface OpenAPISpec {
   openapi: string
@@ -157,6 +158,16 @@ function findOperation(
   return null
 }
 
+function operationIds(spec: OpenAPISpec): string[] {
+  const ids: string[] = []
+  for (const methods of Object.values(spec.paths)) {
+    for (const operation of Object.values(methods)) {
+      if (operation.operationId) ids.push(operation.operationId)
+    }
+  }
+  return ids
+}
+
 /**
  * Check if a string is an HTTP method
  */
@@ -194,12 +205,22 @@ export async function apiProxy(cwd: string, argv: string[]): Promise<void> {
     let pathOverride: string | undefined
     let argsStartIndex = 1
 
-    if (isHttpMethod(argv[0]!) && argv.length > 1) {
+    // Spec paths always start with `/`, so `get user` is the operation name, not `GET user`.
+    if (isHttpMethod(argv[0]!) && argv[1]?.startsWith('/')) {
       methodOverride = argv[0]!.toUpperCase()
       pathOverride = argv[1]!
       argsStartIndex = 2
     } else {
-      operationId = argv[0]!
+      // Any spelling of the name works: runCloneFeed, run-clone-feed, run_clone_feed, `run clone feed`.
+      const resolved = resolveCommand(operationIds(spec), argv)
+      if (!resolved.ok) {
+        console.error(resolved.reason === 'ambiguous'
+          ? `❌ Error: '${argv[0]}' is ambiguous. Could be: ${resolved.candidates.join(', ')}`
+          : `❌ Error: Operation '${argv[0]}' not found in OpenAPI spec`)
+        process.exit(1)
+      }
+      operationId = resolved.name
+      argsStartIndex = resolved.consumed
     }
 
     let operation: { path: string; method: string; operation: OpenAPIOperation } | null = null

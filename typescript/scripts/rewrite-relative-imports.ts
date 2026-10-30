@@ -16,7 +16,7 @@ async function rewriteDirectory(dir: string): Promise<void> {
       await rewriteDirectory(fullPath)
       continue
     }
-    if (entry.isFile() && fullPath.endsWith('.js')) {
+    if (entry.isFile() && (fullPath.endsWith('.js') || fullPath.endsWith('.d.ts'))) {
       await rewriteFile(fullPath)
     }
   }
