@@ -112,22 +112,25 @@ function install(pkg) {
   installed.add(pkg.dir)
 }
 
-// npm reports why a publish was refused on stderr (EOTP, E403, E404 for a scope
-// the account cannot write). Keep that text so the reason survives into the
-// summary instead of only scrolling past in the log.
+// In a terminal npm handles 2FA itself: with `auth-type=web` it opens the browser
+// and waits, so the child must inherit the real terminal. Only a non-interactive
+// run (a pipe, CI) gets its stderr captured, which is where the reason for a
+// refusal — EOTP, E403, E404 for a scope the account cannot write — would
+// otherwise be lost.
 function publish(pkg, publishArgs) {
+  const interactive = Boolean(process.stdin.isTTY)
   const result = spawnSync('npm', publishArgs, {
     cwd: path.join(repoRoot, pkg.dir),
-    stdio: ['inherit', 'inherit', 'pipe'],
+    stdio: interactive ? 'inherit' : ['inherit', 'inherit', 'pipe'],
     encoding: 'utf8',
   })
-  if (result.stderr) {
+  if (!interactive && result.stderr) {
     process.stderr.write(result.stderr)
   }
   if (result.status !== 0) {
-    const stderr = result.stderr ?? ''
-    const hint = !otp && /EOTP|one-time password/i.test(stderr)
-      ? ' This package requires 2FA: re-run with `--otp <code>` or NPM_OTP=<code>.'
+    const captured = interactive ? '' : (result.stderr ?? '')
+    const hint = !otp && !interactive && /EOTP|one-time password/i.test(captured)
+      ? ' This package requires 2FA: run this from a terminal so npm can open its browser flow, or pass `--otp <code>` / NPM_OTP=<code>.'
       : ''
     throw new Error(`npm publish exited ${result.status}.${hint}`)
   }
