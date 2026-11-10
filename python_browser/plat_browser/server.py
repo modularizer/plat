@@ -249,7 +249,7 @@ class BrowserPLATServer:
             path_item[operation.method.lower()] = trim_none(entry)
         return {
             "openapi": "3.1.0",
-            "info": {"title": "plat browser python server", "version": "0.1.0"},
+            "info": {"title": "plat browser python server", "version": "0.17.1"},
             "paths": paths,
         }
 

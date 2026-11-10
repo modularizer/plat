@@ -1,0 +1,104 @@
+#!/usr/bin/env node
+
+// Publishes every npm package the repo contains, in workspace dependency order
+// (a dependency has to exist on the registry before its dependant installs).
+// Used by .github/workflows/publish.yml. `--dry-run` shows the plan without
+// touching the registry, and versions already published are skipped so a
+// half-finished release can be re-run.
+
+import { execFileSync } from 'node:child_process'
+import path from 'node:path'
+import process from 'node:process'
+import { inDependencyOrder, repoRoot } from './packages.mjs'
+
+const dryRun = process.argv.includes('--dry-run')
+const packages = inDependencyOrder()
+const installed = new Set()
+const failures = []
+
+console.log(`npm packages: ${packages.map((pkg) => `${pkg.name}@${pkg.version}`).join(', ')}`)
+
+for (const pkg of packages) {
+  console.log(`\n::group::${pkg.name}@${pkg.version}`)
+  try {
+    installBuildTooling(pkg)
+    install(pkg)
+    runIn(pkg, 'npm', ['run', 'build', '--if-present'])
+
+    if (pkg.scripts.test) {
+      if (pkg.skipTestReason) {
+        console.log(`Skipping tests: ${pkg.skipTestReason}`)
+      } else {
+        runIn(pkg, 'npm', ['test'])
+      }
+    }
+
+    if (dryRun) {
+      console.log('[dry-run] npm publish --provenance --access public')
+    } else if (isPublished(pkg)) {
+      console.log(`${pkg.name}@${pkg.version} is already published; skipping`)
+    } else {
+      runIn(pkg, 'npm', ['publish', '--provenance', '--access', 'public'])
+    }
+  } catch (error) {
+    failures.push(`${pkg.name}@${pkg.version}`)
+    console.error(`::error::${pkg.name}@${pkg.version}: ${error instanceof Error ? error.message : String(error)}`)
+  } finally {
+    console.log('::endgroup::')
+  }
+}
+
+if (failures.length > 0) {
+  console.error(`\nFailed to publish: ${failures.join(', ')}`)
+  process.exitCode = 1
+} else {
+  console.log(`\nAll ${packages.length} npm package(s) handled.`)
+}
+
+// Some builds compile sources from a neighbouring package (`../typescript/...`)
+// and need its dependencies, so install that package first. Derived from the
+// build script rather than a list of names.
+function installBuildTooling(pkg) {
+  const buildScript = pkg.scripts.build ?? ''
+  for (const match of buildScript.matchAll(/\.\.\/([A-Za-z0-9_.-]+)\//g)) {
+    const dependency = packages.find((candidate) => candidate.dir === match[1])
+    if (dependency) {
+      install(dependency)
+    }
+  }
+}
+
+function install(pkg) {
+  if (installed.has(pkg.dir)) {
+    return
+  }
+  if (pkg.lock) {
+    runIn(pkg, 'npm', ['ci'])
+  } else {
+    runIn(pkg, 'npm', ['install', '--no-audit', '--no-fund'])
+  }
+  installed.add(pkg.dir)
+}
+
+function runIn(pkg, command, args) {
+  execFileSync(command, args, {
+    cwd: path.join(repoRoot, pkg.dir),
+    stdio: 'inherit',
+  })
+}
+
+function isPublished(pkg) {
+  try {
+    execFileSync('npm', ['view', `${pkg.name}@${pkg.version}`, 'version', '--json'], {
+      cwd: path.join(repoRoot, pkg.dir),
+      stdio: 'pipe',
+    })
+    return true
+  } catch (error) {
+    const output = `${error.stdout ?? ''}${error.stderr ?? ''}`
+    if (output.includes('E404') || output.includes('is not in this registry')) {
+      return false
+    }
+    throw new Error(`Could not check whether ${pkg.name}@${pkg.version} exists: ${output.trim() || error.message}`)
+  }
+}

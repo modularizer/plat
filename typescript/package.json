@@ -1,6 +1,6 @@
 {
   "name": "@modularizer/plat",
-  "version": "0.17.0",
+  "version": "0.17.1",
   "description": "Protocol and Language Agnostic Tooling Yielding Universal Semantics",
   "type": "module",
   "author": {
@@ -30,6 +30,10 @@
     "./client": {
       "import": "./dist/client-entry.js",
       "types": "./dist/client-entry.d.ts"
+    },
+    "./client-lite": {
+      "import": "./dist/client-lite-entry.js",
+      "types": "./dist/client-lite-entry.d.ts"
     },
     "./client-server": {
       "import": "./dist/client-server-entry.js",

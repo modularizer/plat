@@ -1,29 +1,36 @@
 #!/usr/bin/env node
 
+// Version bumps for every package the repo contains, discovered from the tree
+// (see scripts/packages.mjs) rather than kept in a list. A bump returns the
+// planned edits first, so `release.mjs --dry-run` can show them without writing.
+
 import fs from 'node:fs'
 import path from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
+import {
+  discoverPackages,
+  planSourceVersionChanges,
+  replacePyprojectVersion,
+  repoRoot,
+  semverPattern,
+} from './packages.mjs'
 
-const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const semverPattern = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-.]+)?(?:\+[0-9A-Za-z-.]+)?$/
+const DEPENDENCY_FIELDS = ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies']
 
-export const VERSION_FILES = [
-  'typescript/package.json',
-  'typescript/package-lock.json',
-  'typescript_client/package.json',
-  'authority/package.json',
-  'authority/package-lock.json',
-  'python/pyproject.toml',
-  'typescript/src/server/server.ts',
-  'typescript/src/client-side-server/server.ts',
-]
+// `link:`, `file:` and `workspace:` specs point at this checkout, not a registry
+// release, so they are left alone; plain, caret and tilde ranges are rewritten.
+function isRegistryRange(spec) {
+  return typeof spec === 'string' && /^(?:\^|~)?\d/.test(spec)
+}
 
-export function getCurrentVersion() {
-  const packageJson = readJson('typescript/package.json')
-  const currentVersion = packageJson.version
+export function getCurrentVersion(packages = discoverPackages()) {
+  // When packages have drifted apart the highest version wins, so the bump
+  // brings the laggards up instead of leaving them behind forever.
+  const versions = packages.map((pkg) => pkg.version).sort(compareVersions)
+  const currentVersion = versions.at(-1)
   if (!semverPattern.test(currentVersion)) {
-    throw new Error(`Expected a semver version in typescript/package.json, got: ${currentVersion}`)
+    throw new Error(`Expected a semver version in the package manifests, got: ${currentVersion}`)
   }
   return currentVersion
 }
@@ -41,61 +48,11 @@ export function resolveNextVersion(spec, currentVersion = getCurrentVersion()) {
   throw new Error('Usage: node scripts/bump-version.mjs [--patch|--minor|<semver>]')
 }
 
-export function bumpVersion(nextVersion) {
-  if (!nextVersion || !semverPattern.test(nextVersion)) {
-    throw new Error('Usage: node scripts/bump-version.mjs [--patch|--minor|<semver>]')
-  }
-
-  const touchedFiles = []
-
-  updateJson('typescript/package.json', (data) => {
-    data.version = nextVersion
-  }, touchedFiles)
-
-  updateJson('typescript/package-lock.json', (data) => {
-    data.version = nextVersion
-    if (data.packages?.['']) {
-      data.packages[''].version = nextVersion
-    }
-  }, touchedFiles)
-
-  updateText('python/pyproject.toml', (source) => {
-    assertPattern(source, /^version = ".*"$/m, 'python/pyproject.toml')
-    return source.replace(/^version = ".*"$/m, `version = "${nextVersion}"`)
-  }, touchedFiles)
-
-  updateText('typescript/src/server/server.ts', (source) => {
-    assertPattern(source, /version: '[^']+'/m, 'typescript/src/server/server.ts')
-    return source.replace(/version: '[^']+'/m, `version: '${nextVersion}'`)
-  }, touchedFiles)
-
-  updateText('typescript/src/client-side-server/server.ts', (source) => {
-    assertPattern(source, /version: '[^']+'/m, 'typescript/src/client-side-server/server.ts')
-    return source.replace(/version: '[^']+'/m, `version: '${nextVersion}'`)
-  }, touchedFiles)
-
-  updateJson('typescript_client/package.json', (data) => {
-    data.version = nextVersion
-  }, touchedFiles)
-
-  updateJson('authority/package.json', (data) => {
-    data.version = nextVersion
-    if (data.dependencies?.['@modularizer/plat']) {
-      data.dependencies['@modularizer/plat'] = `^${nextVersion}`
-    }
-  }, touchedFiles)
-
-  updateJson('authority/package-lock.json', (data) => {
-    data.version = nextVersion
-    if (data.packages?.['']) {
-      data.packages[''].version = nextVersion
-      if (data.packages[''].dependencies?.['@modularizer/plat']) {
-        data.packages[''].dependencies['@modularizer/plat'] = `^${nextVersion}`
-      }
-    }
-  }, touchedFiles)
-
-  return touchedFiles
+function compareVersions(a, b) {
+  const parse = (version) => version.split(/[.+-]/).slice(0, 3).map(Number)
+  const [aMajor, aMinor, aPatch] = parse(a)
+  const [bMajor, bMinor, bPatch] = parse(b)
+  return aMajor - bMajor || aMinor - bMinor || aPatch - bPatch
 }
 
 function incrementSemver(version, kind) {
@@ -112,39 +69,121 @@ function incrementSemver(version, kind) {
   return `${major}.${minor + 1}.0`
 }
 
-function updateJson(relativePath, mutate, touchedFiles) {
-  const filePath = path.join(repoRoot, relativePath)
-  const data = readJson(relativePath)
-  mutate(data)
-  fs.writeFileSync(filePath, `${JSON.stringify(data, null, 2)}\n`)
-  touchedFiles.push(relativePath)
-}
-
-function readJson(relativePath) {
-  const filePath = path.join(repoRoot, relativePath)
-  const source = fs.readFileSync(filePath, 'utf8')
-  return JSON.parse(source)
-}
-
-function updateText(relativePath, transform, touchedFiles) {
-  const filePath = path.join(repoRoot, relativePath)
-  const source = fs.readFileSync(filePath, 'utf8')
-  const updated = transform(source)
-  fs.writeFileSync(filePath, updated)
-  touchedFiles.push(relativePath)
-}
-
-function assertPattern(source, pattern, label) {
-  if (!pattern.test(source)) {
-    throw new Error(`Expected to update ${label}, but no matching version string was found.`)
+function rewriteWorkspaceRanges(block, packageName, npmPackages, nextVersion) {
+  for (const field of DEPENDENCY_FIELDS) {
+    const dependencies = block?.[field]
+    if (!dependencies) {
+      continue
+    }
+    for (const dependency of npmPackages) {
+      if (dependency.name !== packageName && isRegistryRange(dependencies[dependency.name])) {
+        dependencies[dependency.name] = `^${nextVersion}`
+      }
+    }
   }
 }
 
+// Manifests are edited in place: several are hand-formatted, and re-serializing
+// them would rewrite the whole file on every release.
+function planManifestChange(pkg, npmPackages, nextVersion) {
+  const absolutePath = path.join(repoRoot, pkg.manifest)
+  const before = fs.readFileSync(absolutePath, 'utf8')
+  let after = before.replace(/"version"\s*:\s*"[^"]*"/, `"version": "${nextVersion}"`)
+
+  for (const dependency of npmPackages) {
+    if (dependency.name === pkg.name) {
+      continue
+    }
+    const pattern = new RegExp(`("${escapeRegExp(dependency.name)}"\\s*:\\s*")([^"]*)(")`, 'g')
+    after = after.replace(pattern, (match, open, range, close) =>
+      isRegistryRange(range) ? `${open}^${nextVersion}${close}` : match,
+    )
+  }
+
+  return before === after ? undefined : { file: pkg.manifest, absolutePath, before, after }
+}
+
+// Lockfiles are generated by npm with two-space JSON, so rewriting them wholesale
+// keeps the diff to the fields that actually changed.
+function planLockChange(file, mutate) {
+  const absolutePath = path.join(repoRoot, file)
+  const before = fs.readFileSync(absolutePath, 'utf8')
+  const data = JSON.parse(before)
+  mutate(data)
+  const after = `${JSON.stringify(data, null, 2)}\n`
+  return before === after ? undefined : { file, absolutePath, before, after }
+}
+
+export function planVersionBump(nextVersion, packages = discoverPackages()) {
+  if (!nextVersion || !semverPattern.test(nextVersion)) {
+    throw new Error('Usage: node scripts/bump-version.mjs [--patch|--minor|<semver>]')
+  }
+
+  const npmPackages = packages.filter((pkg) => pkg.kind === 'npm')
+  const changes = []
+  const add = (change) => {
+    if (change) {
+      changes.push(change)
+    }
+  }
+
+  for (const pkg of packages) {
+    if (pkg.kind === 'npm') {
+      add(planManifestChange(pkg, npmPackages, nextVersion))
+      if (pkg.lock) {
+        add(
+          planLockChange(pkg.lock, (data) => {
+            data.version = nextVersion
+            const root = data.packages?.['']
+            if (root) {
+              root.version = nextVersion
+              rewriteWorkspaceRanges(root, pkg.name, npmPackages, nextVersion)
+            }
+          }),
+        )
+      }
+      continue
+    }
+
+    const absolutePath = path.join(repoRoot, pkg.manifest)
+    const before = fs.readFileSync(absolutePath, 'utf8')
+    const after = replacePyprojectVersion(before, nextVersion, pkg.manifest)
+    if (before !== after) {
+      add({ file: pkg.manifest, absolutePath, before, after })
+    }
+  }
+
+  changes.push(...planSourceVersionChanges(packages, nextVersion))
+
+  return changes
+}
+
+export function applyVersionBump(changes) {
+  for (const change of changes) {
+    fs.writeFileSync(change.absolutePath, change.after)
+  }
+  return changes.map((change) => change.file)
+}
+
+export function bumpVersion(nextVersion, packages = discoverPackages()) {
+  return applyVersionBump(planVersionBump(nextVersion, packages))
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
-    const nextVersion = resolveNextVersion(process.argv[2])
-    const touchedFiles = bumpVersion(nextVersion)
-    console.log(`Bumped plat version to ${nextVersion}`)
+    const packages = discoverPackages()
+    const versions = [...new Set(packages.map((pkg) => pkg.version))]
+    if (versions.length > 1) {
+      console.warn(`Warning: packages had drifted apart (${versions.join(', ')}); this bump brings them all together.`)
+    }
+    const nextVersion = resolveNextVersion(process.argv[2], getCurrentVersion(packages))
+    const touchedFiles = bumpVersion(nextVersion, packages)
+    console.log(`Bumped ${packages.length} package(s) to ${nextVersion}`)
     for (const file of touchedFiles) {
       console.log(`- ${file}`)
     }

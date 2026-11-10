@@ -1,6 +1,6 @@
 {
   "name": "@modularizer/plat-authority",
-  "version": "0.17.0",
+  "version": "0.17.1",
   "type": "module",
   "description": "Standalone authority/control-plane service for PLAT authority-mode CSS routing.",
   "main": "./dist/index.js",
@@ -12,6 +12,7 @@
   "publishConfig": {
     "access": "public"
   },
+  "publishSkipTest": "the suite needs a live Postgres and a running authority server",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "prepublishOnly": "npm run build && npm run typecheck",
@@ -32,7 +33,7 @@
     "pg": "^8.11.0",
     "redis": "^4.7.0",
     "ws": "^8.18.3",
-    "@modularizer/plat": "^0.17.0"
+    "@modularizer/plat": "^0.17.1"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",

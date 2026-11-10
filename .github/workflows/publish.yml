@@ -3,13 +3,32 @@ name: Publish
 on:
   release:
     types: [published]
+  workflow_dispatch:
 
 jobs:
-  publish-npm:
+  plan:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: typescript
+    outputs:
+      npm: ${{ steps.plan.outputs.npm }}
+      pypi: ${{ steps.plan.outputs.pypi }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Discover release targets
+        id: plan
+        run: node scripts/packages.mjs --plan >> "$GITHUB_OUTPUT"
+      - name: Show release targets
+        run: node scripts/packages.mjs
+
+  # One job, packages published in dependency order, so a dependency is on the
+  # registry before anything that installs it. Every package is handled even if
+  # an earlier one fails; the job fails at the end if any did.
+  publish-npm:
+    needs: plan
+    if: needs.plan.outputs.npm != '[]'
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write
@@ -19,28 +38,42 @@ jobs:
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
-      - run: npm ci
-      - run: npm run build
-      - run: npm test
-      - run: npm publish --provenance --access public
+      # Node 22 ships npm 10, which cannot exchange the OIDC token for registry
+      # credentials; trusted publishing needs npm 11.5 or newer.
+      - name: Use an npm that supports trusted publishing
+        run: npm install --global npm@^11.5.0
+      - name: Publish npm packages
+        run: node scripts/publish-npm.mjs
 
   publish-pypi:
+    needs: plan
+    if: needs.plan.outputs.pypi != '[]'
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: python
     permissions:
       contents: read
       id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.pypi) }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install build pytest pytest-asyncio
-      - run: pip install -e .
-      - run: pytest tests/
-      - run: python -m build
-      - uses: pypa/gh-action-pypi-publish@release/v1
+      - name: Install
+        working-directory: ${{ matrix.dir }}
+        run: |
+          pip install build pytest pytest-asyncio
+          pip install -e .
+      - name: Test
+        if: matrix.hasTests
+        working-directory: ${{ matrix.dir }}
+        run: pytest tests/
+      - name: Build
+        working-directory: ${{ matrix.dir }}
+        run: python -m build
+      - name: Publish
+        uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          packages-dir: python/dist/
+          packages-dir: ${{ matrix.dir }}/dist
