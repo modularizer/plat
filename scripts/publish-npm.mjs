@@ -6,8 +6,9 @@
 // npm is published from a machine that has run `npm login`, because this repo has
 // no trusted publisher configured for its packages and GitHub's token is not an
 // npm credential — npm answers CI's PUT with 404. A package can additionally
-// require 2FA, in which case npm refuses with EOTP unless a one-time password is
-// passed: `--otp 123456` or `NPM_OTP=123456`.
+// require 2FA: run this from a terminal, where npm opens its browser/passkey flow
+// itself. A headless run cannot complete it and needs `--otp 123456` or
+// `NPM_OTP=123456` instead.
 //
 // Versions already on the registry are skipped, so a half-finished release can be
 // re-run, and one failing package does not stop the rest from publishing.
@@ -128,12 +129,38 @@ function publish(pkg, publishArgs) {
     process.stderr.write(result.stderr)
   }
   if (result.status !== 0) {
+    // A publish that reports failure can still have landed: the registry has been
+    // observed answering a 2FA publish with a stage conflict while committing the
+    // version (npm/cli#9889), which made this driver cry failure over a shipped
+    // package. The registry decides whether the version exists, not the exit code.
+    if (publishedAfterRetry(pkg)) {
+      console.warn(`${pkg.name}@${pkg.version}: npm exited ${result.status}, but the registry has the version; continuing.`)
+      return
+    }
     const captured = interactive ? '' : (result.stderr ?? '')
     const hint = !otp && !interactive && /EOTP|one-time password/i.test(captured)
       ? ' This package requires 2FA: run this from a terminal so npm can open its browser flow, or pass `--otp <code>` / NPM_OTP=<code>.'
       : ''
     throw new Error(`npm publish exited ${result.status}.${hint}`)
   }
+}
+
+// A freshly written version takes a moment to become readable, and a lookup that
+// fails for some other reason says nothing about whether the version shipped.
+function publishedAfterRetry(pkg, attempts = 5) {
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      if (isPublished(pkg)) {
+        return true
+      }
+    } catch {
+      // Fall through to the next attempt.
+    }
+    if (attempt < attempts) {
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 3000)
+    }
+  }
+  return false
 }
 
 function runIn(pkg, command, args) {
