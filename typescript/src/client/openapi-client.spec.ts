@@ -167,4 +167,26 @@ describe('OpenAPIClient', () => {
     expect(warnSpy).not.toHaveBeenCalled()
     expect(debugSpy).not.toHaveBeenCalled()
   })
+
+  it('clears its request timeout, so a one-shot caller can exit', async () => {
+    const fetchMock = jest.fn(async () => new Response('{}', {
+      headers: { 'content-type': 'application/json' },
+    }))
+    globalThis.fetch = fetchMock as typeof fetch
+
+    const liveTimers = (): number =>
+      process.getActiveResourcesInfo().filter((resource) => resource === 'Timeout').length
+    const client = new OpenAPIClient(SPEC, { baseUrl: BASE_URL, timeoutMs: 30_000 })
+    const before = liveTimers()
+    await client.get('/items', { id: '123' })
+
+    expect(liveTimers()).toBe(before)
+  })
+
+  it('still times out a request that never answers', async () => {
+    globalThis.fetch = jest.fn(() => new Promise<Response>(() => undefined)) as typeof fetch
+
+    const client = new OpenAPIClient(SPEC, { baseUrl: BASE_URL, timeoutMs: 10 })
+    await expect(client.get('/items', { id: '123' }, { retry: false })).rejects.toThrow('Request timeout')
+  })
 })

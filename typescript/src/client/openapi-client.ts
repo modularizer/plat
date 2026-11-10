@@ -15,7 +15,6 @@ import type { OpenAPIClientTransportPlugin } from './transport-plugin'
 import { createHttpTransportPlugin } from './http-transport-plugin'
 import { createRpcTransportPlugin } from './rpc-transport-plugin'
 import { executeClientTransportPlugin, type OpenAPIClientTransportRequest } from './transport-plugin'
-import { createClientSideServerMQTTWebRTCTransportPlugin } from '../client-side-server/mqtt-webrtc'
 
 export type HeadersInit<TCustom extends Record<string, HeaderValue | undefined> = {}> =
   | TypedHeaders<TCustom>
@@ -404,7 +403,7 @@ class OpenAPIClientImpl<TSpec extends OpenAPISpec = OpenAPISpec, THeaders extend
     this.hooks = options.hooks
     const builtInTransportRuntime = this.createBuiltInTransportRuntime()
     const defaultTransportPlugins = this.baseUrl.startsWith('css://')
-      ? [createClientSideServerMQTTWebRTCTransportPlugin()]
+      ? [createLazyClientSideServerPlugin()]
       : []
     this.transportPlugins = [
       ...(options.transportPlugins ?? []),
@@ -502,7 +501,7 @@ class OpenAPIClientImpl<TSpec extends OpenAPISpec = OpenAPISpec, THeaders extend
         timeoutMs: number
         fetchInit?: RequestInit
       }) => {
-        return await Promise.race([
+        return await this.withTimeout(
           fetch(request.url, {
             ...(request.fetchInit ?? this.fetchInit),
             method: request.method,
@@ -510,8 +509,8 @@ class OpenAPIClientImpl<TSpec extends OpenAPISpec = OpenAPISpec, THeaders extend
             ...buildFetchBodyInit(request.method, request.body),
             signal: request.signal,
           }),
-          this.createTimeoutPromise(request.timeoutMs),
-        ]) as Response
+          request.timeoutMs,
+        ) as Response
       },
       parseResponse: <T>(response: Response, format: ResponseFormat) => this._parseResponse<T>(response, format),
       detectResponseFormat: (response: Response, specContentTypes: string[]) => this._detectResponseFormat(response, specContentTypes),
@@ -732,7 +731,7 @@ class OpenAPIClientImpl<TSpec extends OpenAPISpec = OpenAPISpec, THeaders extend
           await this.hooks.onPreRequest(requestContext)
         }
 
-        const response = await Promise.race([
+        const response = await this.withTimeout(
           fetch(fullUrl, {
             ...this.fetchInit,
             method,
@@ -740,8 +739,8 @@ class OpenAPIClientImpl<TSpec extends OpenAPISpec = OpenAPISpec, THeaders extend
             ...buildFetchBodyInit(method, body),
             signal: options?.signal,
           }),
-          this.createTimeoutPromise(timeoutMs),
-        ]) as Response
+          timeoutMs,
+        ) as Response
 
         // Call post-request hook
         if (this.hooks?.onPostRequest) {
@@ -1109,13 +1108,25 @@ class OpenAPIClientImpl<TSpec extends OpenAPISpec = OpenAPISpec, THeaders extend
     }
   }
 
-  private createTimeoutPromise(timeoutMs: number): Promise<never> {
-    return new Promise((_, reject) =>
-      setTimeout(
-        () => reject(new Error('Request timeout')),
-        timeoutMs,
-      ),
-    )
+  /**
+   * `promise`, rejected with "Request timeout" if it has not settled within `timeoutMs`.
+   *
+   * The timer is cleared as soon as either side settles, and is unref'd while it waits: a request that has
+   * answered must not leave a live timer behind, or a one-shot caller (a CLI command, a build) waits out the
+   * whole timeout before its process can exit. The rejection is still the caller's timeout, so a server that
+   * accepts the connection and never answers fails the same way it did before.
+   */
+  private async withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error('Request timeout')), timeoutMs)
+      ;(timer as { unref?: () => void }).unref?.()
+    })
+    try {
+      return await Promise.race([promise, timeout])
+    } finally {
+      if (timer !== undefined) clearTimeout(timer)
+    }
   }
 
   delay(ms: number): Promise<void> {
@@ -1454,3 +1465,32 @@ interface OpenAPIClientConstructor {
 }
 
 export const OpenAPIClient = OpenAPIClientImpl as unknown as OpenAPIClientConstructor
+
+
+/**
+ * The css:// transport is large (MQTT, WebRTC, crypto), so it loads on the first css:// call. A client that only
+ * talks HTTP never downloads it.
+ */
+function createLazyClientSideServerPlugin(): OpenAPIClientTransportPlugin<{
+  plugin: OpenAPIClientTransportPlugin
+  connection: unknown
+}> {
+  type Loaded = { plugin: OpenAPIClientTransportPlugin; connection: unknown }
+  return {
+    name: 'css',
+    canHandle: ({ baseUrl, transportMode }) => transportMode === 'css' || baseUrl.startsWith('css://'),
+    async connect(request) {
+      const { createClientSideServerMQTTWebRTCTransportPlugin } = await import('../client-side-server/mqtt-webrtc')
+      const plugin = createClientSideServerMQTTWebRTCTransportPlugin()
+      return { plugin, connection: await plugin.connect?.(request) }
+    },
+    onConnect: ({ plugin, connection }: Loaded, request) => plugin.onConnect?.(connection, request),
+    sendRequest: ({ plugin, connection }: Loaded, request) => plugin.sendRequest(connection, request),
+    getUpdate: ({ plugin, connection }: Loaded, request) => plugin.getUpdate?.(connection, request),
+    onUpdate: ({ plugin, connection }: Loaded, update, request) => plugin.onUpdate?.(connection, update, request),
+    getResult: ({ plugin, connection }: Loaded, request) => plugin.getResult(connection, request),
+    onResult: ({ plugin, connection }: Loaded, result, request) => plugin.onResult?.(connection, result, request),
+    disconnect: ({ plugin, connection }: Loaded, request) => plugin.disconnect?.(connection, request),
+    onDisconnect: ({ plugin, connection }: Loaded, request) => plugin.onDisconnect?.(connection, request),
+  }
+}
