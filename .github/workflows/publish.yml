@@ -1,5 +1,9 @@
 name: Publish
 
+# npm packages are published from the release machine (`node scripts/release.mjs
+# --publish` runs scripts/publish-npm.mjs) because npm trusted publishing is not
+# configured for these packages and GitHub's token is not an npm credential — npm
+# answers the PUT with 404. PyPI is published here, on the release event.
 on:
   release:
     types: [published]
@@ -9,7 +13,6 @@ jobs:
   plan:
     runs-on: ubuntu-latest
     outputs:
-      npm: ${{ steps.plan.outputs.npm }}
       pypi: ${{ steps.plan.outputs.pypi }}
     steps:
       - uses: actions/checkout@v4
@@ -21,29 +24,6 @@ jobs:
         run: node scripts/packages.mjs --plan >> "$GITHUB_OUTPUT"
       - name: Show release targets
         run: node scripts/packages.mjs
-
-  # One job, packages published in dependency order, so a dependency is on the
-  # registry before anything that installs it. Every package is handled even if
-  # an earlier one fails; the job fails at the end if any did.
-  publish-npm:
-    needs: plan
-    if: needs.plan.outputs.npm != '[]'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          registry-url: https://registry.npmjs.org
-      # Node 22 ships npm 10, which cannot exchange the OIDC token for registry
-      # credentials; trusted publishing needs npm 11.5 or newer.
-      - name: Use an npm that supports trusted publishing
-        run: npm install --global npm@^11.5.0
-      - name: Publish npm packages
-        run: node scripts/publish-npm.mjs
 
   publish-pypi:
     needs: plan

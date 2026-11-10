@@ -57,5 +57,7 @@ That one method surface can become:
 `node scripts/release.mjs "client-side server + docs site" 0.12.0 --publish`
 
 A release covers every package in the repo (discovered from each `package.json` / `pyproject.toml`),
-not a list: `--dry-run` shows what would change and publish, `node scripts/packages.mjs` lists the
-targets, and `node scripts/publish-npm.mjs` publishes the npm ones in dependency order.
+not a list: `--dry-run` shows what would change and publish, and `node scripts/packages.mjs` lists the
+targets. With `--publish`, npm packages are published from this machine in dependency order
+(`scripts/publish-npm.mjs`, so run `npm login` first), and the GitHub release publishes the Python
+packages through `.github/workflows/publish.yml`.

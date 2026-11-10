@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 
 // Cuts a release of every package in the repo: bumps them all to one version,
-// commits the version files, tags a GitHub release, and (with --publish) lets
-// .github/workflows/publish.yml publish all of them.
+// commits the version files, tags a GitHub release, and (with --publish) publishes
+// them: npm from this machine (npm trusted publishing is not configured for this
+// repo, so CI cannot do it) and the Python packages through the workflow that the
+// release triggers.
 //
 // The release commit deliberately contains only version files, so anything left
 // uncommitted would be silently absent from the build that ships. That is why an
@@ -78,7 +80,8 @@ try {
 
   if (dryRun) {
     const commitPlan = versionFiles.length > 0 ? `commit ${versionFiles.length} version file(s), ` : ''
-    console.log(`Would ${commitPlan}push, and create GitHub release v${nextVersion} (${shouldPublish ? 'published' : 'draft'}).`)
+    const publishPlan = shouldPublish ? 'publish the npm packages from this machine, then ' : ''
+    console.log(`Would ${commitPlan}push, ${publishPlan}create GitHub release v${nextVersion} (${shouldPublish ? 'published' : 'draft'}).`)
     process.exit(0)
   }
 
@@ -89,6 +92,14 @@ try {
   }
 
   run('git', ['push'])
+
+  // npm before the release: if publishing fails (not logged in, a version already
+  // taken) the tag is not created, so nobody sees a release that is missing
+  // packages. PyPI is the workflow's job, triggered by the release below.
+  if (shouldPublish) {
+    run('node', ['scripts/publish-npm.mjs'])
+  }
+
   run('gh', [
     'release',
     'create',
