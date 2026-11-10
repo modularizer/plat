@@ -59,5 +59,6 @@ That one method surface can become:
 A release covers every package in the repo (discovered from each `package.json` / `pyproject.toml`),
 not a list: `--dry-run` shows what would change and publish, and `node scripts/packages.mjs` lists the
 targets. With `--publish`, npm packages are published from this machine in dependency order
-(`scripts/publish-npm.mjs`, so run `npm login` first), and the GitHub release publishes the Python
-packages through `.github/workflows/publish.yml`.
+(`scripts/publish-npm.mjs`, so run `npm login` first; a package with 2FA enforced also needs
+`--otp <code>` or `NPM_OTP=<code>`), and the GitHub release publishes the Python packages through
+`.github/workflows/publish.yml`.
